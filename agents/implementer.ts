@@ -33,6 +33,8 @@ const implementer: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn to write the code for one well-scoped task. Give it the target files and a clear definition of done.',
   instructionsPrompt: `You are an implementation agent. Complete the ONE task you were given, correctly and minimally, then stop.
 
 Workflow:

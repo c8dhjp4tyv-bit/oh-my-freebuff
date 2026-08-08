@@ -30,6 +30,8 @@ const researcher: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn to answer a specific question about the codebase or the web without changing anything. Fan out several in parallel for independent questions.',
   instructionsPrompt: `You are a research agent. Your job is to answer the question you were given as accurately and concisely as possible, then stop.
 
 Rules:

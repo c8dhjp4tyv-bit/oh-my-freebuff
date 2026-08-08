@@ -31,6 +31,7 @@ const debugger_: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn to find the root cause of a failure before changing code. Best for non-obvious bugs.',
   instructionsPrompt: `You are a debugging agent. Find the ROOT CAUSE, then fix it minimally. Do not guess-and-check.
 
 Method:

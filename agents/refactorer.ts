@@ -29,6 +29,8 @@ const refactorer: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn for behavior-preserving restructuring (rename, extract, dedupe) that is checked against the tests.',
   instructionsPrompt: `You refactor: improve the structure of code WITHOUT changing its observable behavior. The safety guarantee is everything.
 
 Method:

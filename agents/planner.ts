@@ -28,6 +28,7 @@ const planner: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn to turn a goal or design into an ordered, checkable task list.',
   instructionsPrompt: `You are a planning agent. Convert a goal or design into an ordered list of small, independently verifiable steps.
 
 Rules for a good plan:

@@ -29,6 +29,8 @@ const securityReviewer: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn for anything touching auth, untrusted input, or secrets to audit for exploitable issues with concrete attack scenarios.',
   instructionsPrompt: `You are a security reviewer. Find exploitable vulnerabilities in the specific code under review. Be concrete: a finding is only real if you can describe an attacker input and the resulting harm.
 
 Trace untrusted data from where it enters (request params, headers, files, env, third-party responses) to where it's used, and check for:

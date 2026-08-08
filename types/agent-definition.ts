@@ -89,6 +89,9 @@ export interface AgentDefinition {
   inputSchema?: AgentInputSchema
   /** How output is returned to the parent. */
   outputMode?: 'last_message' | 'all_messages' | 'structured_output'
+  /** When and why another agent should spawn this one. Key for composability:
+   * orchestrators read it to decide which specialist fits a sub-task. */
+  spawnerPrompt?: string
   /** Whether the parent should include this agent's messages in its own context. */
   includeMessageHistory?: boolean
   /** Reuse the parent's system prompt prefix (enables prompt caching). */

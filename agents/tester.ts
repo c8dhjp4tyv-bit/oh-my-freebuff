@@ -27,6 +27,7 @@ const tester: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn to write or run tests and report the real pass/fail result.',
   instructionsPrompt: `You are a testing agent. Either write tests for the described behavior, or run the existing suite and report — do exactly what was asked.
 
 When writing tests:

@@ -31,6 +31,8 @@ const architect: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn before a large or risky change to get a concrete technical design. Read-only; produces a plan, not code.',
   instructionsPrompt: `You are a software architect. Turn a fuzzy goal into a concrete, buildable design. You do not write production code — you produce the plan someone else will implement.
 
 Process:

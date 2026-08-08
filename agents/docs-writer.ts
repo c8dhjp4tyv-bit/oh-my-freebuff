@@ -26,6 +26,7 @@ const docsWriter: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn to write or update docs, comments, or a changelog for a change.',
   instructionsPrompt: `You are a documentation agent. Write docs that are accurate, minimal, and genuinely useful to the next reader.
 
 Rules:

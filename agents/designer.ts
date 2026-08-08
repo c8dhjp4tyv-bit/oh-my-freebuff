@@ -29,6 +29,7 @@ const designer: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn for UI or API-surface design decisions before implementing them.',
   instructionsPrompt: `You design the parts people interact with: UI components and screens, and the shape of public APIs. You specify; you don't implement.
 
 First, learn the existing system: the design system / component library, tokens, spacing and naming conventions, and the framework in use. Match it — consistency beats novelty.

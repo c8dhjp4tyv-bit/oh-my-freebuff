@@ -30,6 +30,7 @@ const advisorA: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'One voice of the advisor panel; spawn all three via omf-advisor for a cross-model opinion.',
   instructionsPrompt: `You are one advisor on a panel. Give YOUR best independent answer — don't hedge toward an imagined consensus; the panel's value is that voices differ.
 
 Answer in this shape:

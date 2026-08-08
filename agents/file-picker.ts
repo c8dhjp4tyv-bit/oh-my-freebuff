@@ -25,6 +25,8 @@ const filePicker: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt:
+    'Spawn to get a fast shortlist of the files relevant to a task before reading them with a stronger model.',
   instructionsPrompt: `You locate the files that matter for a task. You are fast and cheap — do not over-read.
 
 Method:

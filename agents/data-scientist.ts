@@ -31,6 +31,7 @@ const dataScientist: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn for data exploration, queries, or metrics that must be grounded in the actual data.',
   instructionsPrompt: `You do data work: exploration, analysis, SQL/dataframe queries, metrics, and light modeling. Ground every claim in the actual data.
 
 Method:

@@ -141,6 +141,33 @@ omf notify test
 Channels: Telegram, Discord, Slack, and a local file. Messages support
 `{{projectName}}` and other variables.
 
+## Skills
+
+Skills are reusable, named instructions an agent can invoke. They install to the
+Codebuff-native location and are discovered as `/skill:<name>`:
+
+```
+.agents/skills/<name>/SKILL.md
+```
+
+```bash
+omf skill add my-check      # scaffolds .agents/skills/my-check/SKILL.md
+omf skill list
+omf skill search verify
+omf skill remove my-check
+```
+
+## Config & secrets
+
+Config lives in `.freebuff/omf.jsonc` (project) or `~/.config/freebuff-omf/config.jsonc`
+(`--global`). Notification tokens and webhooks are secrets, so:
+
+- `omf config` redacts them by default; pass `--show-secrets` to reveal.
+- Config files are written with `0600` permissions.
+- A value can reference the environment instead of storing the secret inline:
+  `omf notify setup slack '${SLACK_WEBHOOK}'`.
+- `omf doctor` warns if a project config holding secrets isn't git-ignored.
+
 ## How orchestration works
 
 Orchestrators spawn specialists with Codebuff's `spawn_agents` tool. Each
@@ -187,6 +214,7 @@ npm test
 - [docs/MODES.md](./docs/MODES.md) — the orchestration modes
 - [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md) — tiers, presets, model table
 - [docs/PARITY.md](./docs/PARITY.md) — what's ported from oh-my-claudecode and what isn't
+- [CHANGELOG.md](./CHANGELOG.md) — release notes
 
 ## License
 

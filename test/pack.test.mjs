@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -49,6 +50,21 @@ function arrayField(src, name) {
 
 test('there is a non-trivial number of agents', () => {
   assert.ok(files.length >= 19, `expected >= 19 agents, found ${files.length}`)
+})
+
+test('CLI JS entrypoints are syntactically valid', () => {
+  for (const rel of ['bin/omf.mjs', 'bin/lib.mjs', 'hooks/notify.mjs']) {
+    const res = spawnSync(process.execPath, ['--check', path.join(ROOT, rel)], { encoding: 'utf8' })
+    assert.equal(res.status, 0, `${rel} failed --check:\n${res.stderr}`)
+  }
+})
+
+test('specialists expose a spawnerPrompt for composability', () => {
+  for (const file of files) {
+    if (file.startsWith('omf-')) continue // orchestrators are user-invoked
+    const src = fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8')
+    assert.match(src, /spawnerPrompt:/, `${file} should define spawnerPrompt`)
+  }
 })
 
 test('every agent has a tier in the manifest and vice versa', () => {

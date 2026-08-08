@@ -34,12 +34,53 @@ const omfRalph: AgentDefinition = {
       description:
         'The goal AND its verification command, e.g. "make `npm test` pass" or "get `tsc --noEmit` to exit clean".',
     },
+    params: {
+      type: 'object',
+      properties: {
+        verifyCommand: {
+          type: 'string',
+          description:
+            'Optional. The exact shell command that must exit 0 (e.g. "npm test"). When set, the loop runs it after every apparent completion and refuses to stop while it fails.',
+        },
+        maxIterations: {
+          type: 'number',
+          description: 'Optional cap on verify-fix cycles when verifyCommand is set (default 8).',
+        },
+      },
+    },
   },
   outputMode: 'last_message',
+  // Deterministic loop: when a verifyCommand is provided, the harness — not the
+  // model — enforces "don't stop on a red check". Each time the agent tries to
+  // finish, we run the command ourselves and only let it end if the command
+  // shows no failure, up to a hard iteration cap. Without a verifyCommand it
+  // behaves as a normal prompt-driven agent (step until it ends its turn).
+  handleSteps: function* ({ params }) {
+    const cmd = typeof params?.verifyCommand === 'string' ? params.verifyCommand : ''
+    const max = Number.isFinite(params?.maxIterations) ? Number(params?.maxIterations) : 8
+    let verifications = 0
+    while (true) {
+      const { stepsComplete } = yield 'STEP'
+      if (!stepsComplete) continue
+      if (!cmd) return // no command to enforce — respect the model's end_turn
+      if (verifications >= max) return // safety cap; the prompt reports the blocker
+      verifications++
+      const { toolResult } = yield {
+        toolName: 'run_terminal_command',
+        input: { command: cmd },
+      }
+      const out = JSON.stringify(toolResult ?? '')
+      // Bias toward "not done": only stop when we see a clear pass and no failure
+      // marker. Anything ambiguous keeps the loop going (bounded by max).
+      const failed = /(exit[ _]?code"?:?\s*[1-9])|\bfail(ed|ing|ures?)?\b|\berror\b|\bnot ok\b/i.test(out)
+      if (!failed) return
+    }
+  },
   instructionsPrompt: `You are a persistent verification loop. You are done ONLY when a specific check command exits successfully — never before.
 
 Setup:
 - Identify the exact verification command from the task (the tests, the typecheck, the build, the linter). If it's not given, discover the right one and state it explicitly. This command is your single source of truth.
+- If the caller passed a \`verifyCommand\` param, the harness will re-run it automatically whenever you try to finish and will not let you stop while it still fails — so make that command the real gate and keep working until it is genuinely green.
 
 Loop — repeat until the check passes:
 1. Run the verification command with run_terminal_command. Read the ACTUAL output.

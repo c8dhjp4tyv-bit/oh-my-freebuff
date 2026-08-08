@@ -1,10 +1,16 @@
 # Skills
 
-Reusable, named task patterns that agents can invoke with the `skill` tool.
-Drop `*.md` skill files here; `omf install` copies this folder into
-`.agents/oh-my-freebuff/skills/` alongside the agents.
+Each skill is a directory with a `SKILL.md` file, matching Codebuff's discovery
+layout. `omf install` copies these into the project's shared skills directory:
 
-A skill file is plain markdown with front-matter:
+```
+.agents/skills/<name>/SKILL.md
+```
+
+Codebuff discovers them from `.agents/skills/` (and `~/.agents/skills/` when
+installed globally) and exposes each as `/skill:<name>`.
+
+`SKILL.md` is markdown with front-matter:
 
 ```markdown
 ---
@@ -12,7 +18,16 @@ name: my-skill
 description: One line describing when to use this skill.
 ---
 
-Step-by-step instructions the agent follows when this skill is invoked.
+Instructions the agent follows when this skill applies.
 ```
 
-See `verify-before-done.md` in this folder for a working example.
+Manage skills with the CLI:
+
+```
+omf skill list
+omf skill add <name>
+omf skill remove <name>
+omf skill search <query>
+```
+
+See `verify-before-done/SKILL.md` for a working example.

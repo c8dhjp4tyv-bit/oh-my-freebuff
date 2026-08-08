@@ -1,6 +1,6 @@
 {
   "name": "oh-my-freebuff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Teams-first multi-agent orchestration pack for Freebuff / Codebuff. Curated agents, orchestrators and smart model routing you drop into any project's .agents folder.",
   "keywords": [
     "freebuff",
@@ -29,6 +29,7 @@
     "models.json",
     "agents.manifest.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

@@ -12,7 +12,7 @@
 // Wire it wherever your workflow can call a script on completion (a stop
 // callback, a CI step, a git hook). It exits 0 even if a channel fails, so it
 // never blocks the thing that called it — failures are printed to stderr.
-import { sendNotification, paint, c } from '../bin/lib.mjs'
+import { sendNotification, resolveContext, paint, c } from '../bin/lib.mjs'
 
 async function main() {
   let message = process.argv.slice(2).join(' ').trim()
@@ -27,7 +27,7 @@ async function main() {
   }
   if (!message) message = 'oh-my-freebuff: task finished in {{projectName}}'
 
-  const results = await sendNotification(message)
+  const results = await sendNotification(message, resolveContext({}))
 
   if (results.length === 0) {
     console.error(

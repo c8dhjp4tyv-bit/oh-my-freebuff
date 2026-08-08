@@ -37,6 +37,16 @@ out.
   preset picks, so `premium` can use Claude/GPT while `budget` stays on open
   models.
 
+## Deterministic orchestration
+
+Most orchestrators are prompt-driven, which is enough for their branching logic.
+`omf-ralph` additionally uses Codebuff's `handleSteps` generator: when given a
+`verifyCommand` param, the harness re-runs that command each time the agent tries
+to finish and refuses to stop while it fails (bounded by a hard iteration cap).
+This moves the one guarantee that matters most — "don't declare success on a red
+check" — from prompt text into code. `omf-ultraqa` and `omf-pipeline` remain
+prompt-driven for now; converting them is a reasonable next step.
+
 ## Left out
 
 These depend on Claude Code or tmux specifics with no Codebuff equivalent, so

@@ -29,6 +29,7 @@ const reviewer: AgentDefinition = {
     },
   },
   outputMode: 'last_message',
+  spawnerPrompt: 'Spawn after a change to review it for correctness and quality. Reports findings; does not edit.',
   instructionsPrompt: `You are a code reviewer. Find real problems in the change under review. Be skeptical, be specific, and do not rubber-stamp.
 
 How to review:

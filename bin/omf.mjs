@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // oh-my-freebuff CLI — install and manage the agent pack for Freebuff / Codebuff.
-// Zero runtime dependencies: it's filesystem plumbing plus a few HTTP posts.
+// Zero runtime dependencies: filesystem plumbing plus a few HTTP posts.
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  c, paint, readPackVersion, which, resolveAgentsDir, installedPackDir,
-  PACK_NAME, readJsonc, readJsoncSafe, loadConfig, setConfigValue,
-  getConfigValue, sendNotification, PROJECT_CONFIG, USER_CONFIG,
+  c, paint, readPackVersion, which, resolveContext, PACK_NAME, readJsonc,
+  readJsoncSafe, loadConfig, setConfigValue, getConfigValue, redactConfig,
+  sendNotification, skillDirFor, normalizeSkillName, isGitIgnored, USER_CONFIG,
 } from './lib.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -24,12 +24,22 @@ function listPackAgents() {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()
 }
 
+/** Skill names the pack ships (skills/<name>/SKILL.md). */
+function shippedSkillNames() {
+  const dir = path.join(PACK_ROOT, 'skills')
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir).filter((n) =>
+    fs.existsSync(path.join(dir, n, 'SKILL.md')),
+  )
+}
+
 function parseArgs(argv) {
   const opts = { _: [] }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--global' || a === '-g') opts.global = true
     else if (a === '--force' || a === '-f') opts.force = true
+    else if (a === '--show-secrets') opts.showSecrets = true
     else if (a === '--dir' || a === '-d') opts.dir = argv[++i]
     else if (a.startsWith('--dir=')) opts.dir = a.slice(6)
     else if (a === '--help' || a === '-h') opts.help = true
@@ -49,65 +59,88 @@ function agentDescription(file) {
   return { id: file.replace(/\.ts$/, ''), note: m ? m[1].trim() : '' }
 }
 
-function requireInstalled(opts) {
-  const dir = installedPackDir(opts)
-  if (!fs.existsSync(dir)) {
-    err(paint(c.red, `oh-my-freebuff is not installed at ${dir}`))
-    err(paint(c.dim, `Run: omf install${opts.global ? ' --global' : ''}`))
+function requireInstalled(ctx) {
+  if (!fs.existsSync(ctx.packDir)) {
+    err(paint(c.red, `oh-my-freebuff is not installed at ${ctx.packDir}`))
+    err(paint(c.dim, `Run: omf install${ctx.scope === 'global' ? ' --global' : ''}`))
     process.exit(1)
   }
-  return dir
+  return ctx.packDir
 }
 
 // ---- install / update / uninstall ------------------------------------------
 
-function cmdInstall(opts) {
-  const agentsDir = resolveAgentsDir(opts)
-  const packDest = path.join(agentsDir, PACK_NAME)
-  const typesDest = path.join(agentsDir, 'types')
-
-  if (fs.existsSync(packDest) && !opts.force) {
-    err(paint(c.yellow, `! ${PACK_NAME} is already installed at ${packDest}`))
+function cmdInstall(ctx, opts) {
+  if (fs.existsSync(ctx.packDir) && !opts.force) {
+    err(paint(c.yellow, `! ${PACK_NAME} is already installed at ${ctx.packDir}`))
     err(paint(c.dim, '  Re-run with --force to overwrite (or: omf update).'))
     process.exit(1)
   }
 
-  fs.rmSync(packDest, { recursive: true, force: true })
-  copyDir(path.join(PACK_ROOT, 'agents'), packDest)
-  copyDir(path.join(PACK_ROOT, 'types'), typesDest)
-  for (const extra of ['skills', 'agents.manifest.json', 'models.json']) {
-    const src = path.join(PACK_ROOT, extra)
-    if (fs.existsSync(src)) {
-      const dest = path.join(packDest, extra)
-      if (fs.statSync(src).isDirectory()) copyDir(src, dest)
-      else fs.copyFileSync(src, dest)
-    }
+  // Agents live in our own namespaced dir — safe to replace wholesale.
+  fs.rmSync(ctx.packDir, { recursive: true, force: true })
+  copyDir(path.join(PACK_ROOT, 'agents'), ctx.packDir)
+  for (const extra of ['agents.manifest.json', 'models.json']) {
+    fs.copyFileSync(path.join(PACK_ROOT, extra), path.join(ctx.packDir, extra))
   }
   const hooksSrc = path.join(PACK_ROOT, 'hooks')
-  if (fs.existsSync(hooksSrc)) copyDir(hooksSrc, path.join(packDest, 'hooks'))
+  if (fs.existsSync(hooksSrc)) copyDir(hooksSrc, path.join(ctx.packDir, 'hooks'))
 
-  const agents = listPackAgents()
-  const preset = getConfigValue('modelPreset')
-  if (preset && preset !== 'balanced') applyPreset(preset, opts, true)
+  // Types are shared and Codebuff also generates them. Never clobber an existing
+  // agent-definition.ts — only seed our shim when none is present.
+  let typesNote
+  if (fs.existsSync(ctx.typesFile)) {
+    typesNote = 'kept existing .agents/types'
+  } else {
+    copyDir(path.join(PACK_ROOT, 'types'), path.join(ctx.agentsDir, 'types'))
+    typesNote = 'wrote .agents/types shim'
+  }
+
+  // Skills go to the shared .agents/skills/<name>/SKILL.md that Codebuff reads.
+  // Don't overwrite a same-named skill the user already has unless --force.
+  let skillsAdded = 0
+  let skillsKept = 0
+  for (const name of shippedSkillNames()) {
+    const destDir = path.join(ctx.skillsDir, name)
+    if (fs.existsSync(destDir) && !opts.force) {
+      skillsKept++
+      continue
+    }
+    fs.mkdirSync(destDir, { recursive: true })
+    fs.copyFileSync(path.join(PACK_ROOT, 'skills', name, 'SKILL.md'), path.join(destDir, 'SKILL.md'))
+    skillsAdded++
+  }
+
+  const preset = getConfigValue(ctx, 'modelPreset')
+  if (preset && preset !== 'balanced') applyPreset(ctx, preset, true)
 
   log(paint(c.green, `✓ Installed ${PACK_NAME} v${version()}`))
-  log(`  ${paint(c.dim, 'location:')} ${packDest}`)
-  log(`  ${paint(c.dim, 'agents:')}   ${agents.length}`)
+  log(`  ${paint(c.dim, 'agents:')}   ${listPackAgents().length}  → ${ctx.packDir}`)
+  log(`  ${paint(c.dim, 'types:')}    ${typesNote}`)
+  log(`  ${paint(c.dim, 'skills:')}   ${skillsAdded} added${skillsKept ? `, ${skillsKept} kept` : ''}  → ${ctx.skillsDir}`)
   if (preset) log(`  ${paint(c.dim, 'preset:')}   ${preset}`)
   log('')
   log('Next: run Freebuff in this project and pick an orchestrator, e.g.')
   log(paint(c.cyan, '  freebuff') + paint(c.dim, '   then: "use omf-team to <your task>"'))
 }
 
-function cmdUninstall(opts) {
-  const packDest = installedPackDir(opts)
-  if (!fs.existsSync(packDest)) {
-    log(paint(c.yellow, `Nothing to remove — not installed at ${packDest}`))
+function cmdUninstall(ctx) {
+  if (!fs.existsSync(ctx.packDir)) {
+    log(paint(c.yellow, `Nothing to remove — not installed at ${ctx.packDir}`))
     return
   }
-  fs.rmSync(packDest, { recursive: true, force: true })
-  log(paint(c.green, `✓ Removed ${packDest}`))
-  log(paint(c.dim, '  (Left .agents/types in place; it may be shared.)'))
+  fs.rmSync(ctx.packDir, { recursive: true, force: true })
+  let removedSkills = 0
+  for (const name of shippedSkillNames()) {
+    const d = path.join(ctx.skillsDir, name)
+    if (fs.existsSync(d)) {
+      fs.rmSync(d, { recursive: true, force: true })
+      removedSkills++
+    }
+  }
+  log(paint(c.green, `✓ Removed ${ctx.packDir}`))
+  if (removedSkills) log(paint(c.dim, `  removed ${removedSkills} shipped skill(s) from ${ctx.skillsDir}`))
+  log(paint(c.dim, '  Left .agents/types in place (shared with Codebuff and other agents).'))
 }
 
 // ---- list -------------------------------------------------------------------
@@ -133,7 +166,7 @@ function cmdList() {
 
 // ---- model presets ----------------------------------------------------------
 
-function applyPreset(name, opts, quiet = false) {
+function applyPreset(ctx, name, quiet = false) {
   const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
   const preset = models.presets[name]
   if (!preset) {
@@ -141,17 +174,16 @@ function applyPreset(name, opts, quiet = false) {
     err(paint(c.dim, `Available: ${Object.keys(models.presets).join(', ')}`))
     process.exit(1)
   }
-  const packDir = requireInstalled(opts)
+  requireInstalled(ctx)
   const manifest = readJsonc(path.join(PACK_ROOT, 'agents.manifest.json')).tiers
 
   let changed = 0
-  for (const file of fs.readdirSync(packDir).filter((f) => f.endsWith('.ts'))) {
-    const filePath = path.join(packDir, file)
-    let src = fs.readFileSync(filePath, 'utf8')
+  for (const file of fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))) {
+    const filePath = path.join(ctx.packDir, file)
+    const src = fs.readFileSync(filePath, 'utf8')
     const idMatch = src.match(/\bid:\s*'([^']+)'/)
     if (!idMatch) continue
-    const tier = manifest[idMatch[1]]
-    const model = tier && preset[tier]
+    const model = preset[manifest[idMatch[1]]]
     if (!model) continue
     const next = src.replace(/^(\s*model:\s*)'[^']*'/m, `$1'${model}'`)
     if (next !== src) {
@@ -159,21 +191,19 @@ function applyPreset(name, opts, quiet = false) {
       changed++
     }
   }
-  setConfigValue(opts.global ? 'global' : 'project', 'modelPreset', name)
+  setConfigValue(ctx, 'modelPreset', name)
   if (!quiet) {
     log(paint(c.green, `✓ Applied '${name}' preset`) + paint(c.dim, ` (${preset.description || ''})`))
-    log(`  ${paint(c.dim, 'updated:')} ${changed} agent files in ${packDir}`)
-    for (const t of models.tiers) {
-      if (preset[t]) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
-    }
+    log(`  ${paint(c.dim, 'updated:')} ${changed} agent files in ${ctx.packDir}`)
+    for (const t of models.tiers) if (preset[t]) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
   }
 }
 
-function cmdPreset(opts) {
+function cmdPreset(ctx, opts) {
   const name = opts._[0]
   const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
   if (!name) {
-    const current = getConfigValue('modelPreset') || models.defaultPreset
+    const current = getConfigValue(ctx, 'modelPreset') || models.defaultPreset
     log(paint(c.bold, 'Model presets') + paint(c.dim, `  (current: ${current})`))
     log('')
     for (const [k, v] of Object.entries(models.presets)) {
@@ -184,65 +214,62 @@ function cmdPreset(opts) {
     log(paint(c.dim, 'Apply with:  omf preset <name>'))
     return
   }
-  applyPreset(name, opts)
+  applyPreset(ctx, name)
 }
 
 // ---- config / setup ---------------------------------------------------------
 
-function cmdConfig(opts) {
+function cmdConfig(ctx, opts) {
   const [sub, key, ...valueParts] = opts._
   if (sub === 'set') {
     if (!key || valueParts.length === 0) {
       err(paint(c.red, 'Usage: omf config set <key> <value> [--global]'))
       process.exit(1)
     }
-    const file = setConfigValue(opts.global ? 'global' : 'project', key, valueParts.join(' '))
+    const file = setConfigValue(ctx, key, valueParts.join(' '))
     log(paint(c.green, `✓ Set ${key}`) + paint(c.dim, ` in ${file}`))
   } else if (sub === 'get') {
-    const v = key ? getConfigValue(key) : loadConfig()
-    log(typeof v === 'object' ? JSON.stringify(stripInternal(v), null, 2) : String(v))
+    const v = key ? getConfigValue(ctx, key) : loadConfig(ctx)
+    const shown = opts.showSecrets ? v : redactConfig(v)
+    log(typeof shown === 'object' ? JSON.stringify(shown, null, 2) : String(shown))
   } else {
-    const cfg = stripInternal(loadConfig())
+    const cfg = loadConfig(ctx)
+    const shown = opts.showSecrets ? stripSources(cfg) : redactConfig(cfg)
     log(paint(c.bold, 'Effective config') + paint(c.dim, ' (user < project)'))
-    log(JSON.stringify(cfg, null, 2))
+    log(JSON.stringify(shown, null, 2))
+    if (!opts.showSecrets) log(paint(c.dim, '(secrets hidden — pass --show-secrets to reveal)'))
     log('')
-    log(paint(c.dim, `project: ${PROJECT_CONFIG()}`))
-    log(paint(c.dim, `user:    ${USER_CONFIG()}`))
+    log(paint(c.dim, `project: ${ctx.scope === 'global' ? '(global scope)' : ctx.configFile}`))
+    log(paint(c.dim, `user:    ${USER_CONFIG}`))
   }
 }
 
-function stripInternal(cfg) {
-  const { _user, _project, ...rest } = cfg
+function stripSources(cfg) {
+  const { _sources, ...rest } = cfg
   return rest
 }
 
-function cmdSetup(opts) {
-  log(paint(c.bold, `oh-my-freebuff setup`))
+function cmdSetup(ctx, opts) {
+  log(paint(c.bold, 'oh-my-freebuff setup'))
   log('')
-  // 1. install pack if missing
-  const packDest = installedPackDir(opts)
-  if (!fs.existsSync(packDest)) {
-    cmdInstall(opts)
+  if (!fs.existsSync(ctx.packDir)) cmdInstall(ctx, opts)
+  else log(paint(c.dim, `✓ pack already installed at ${ctx.packDir}`))
+
+  if (!fs.existsSync(ctx.configFile)) {
+    setConfigValue(ctx, 'modelPreset', 'balanced')
+    setConfigValue(ctx, 'notifications', {})
+    log(paint(c.green, `✓ wrote ${ctx.configFile}`))
   } else {
-    log(paint(c.dim, `✓ pack already installed at ${packDest}`))
+    log(paint(c.dim, `✓ config exists: ${ctx.configFile}`))
   }
-  // 2. seed project config
-  const cfgFile = PROJECT_CONFIG()
-  if (!fs.existsSync(cfgFile)) {
-    setConfigValue('project', 'modelPreset', 'balanced')
-    setConfigValue('project', 'notifications', {})
-    log(paint(c.green, `✓ wrote ${cfgFile}`))
-  } else {
-    log(paint(c.dim, `✓ config exists: ${cfgFile}`))
-  }
-  // 3. seed knowledge.md at project root if absent
-  const knowledgeDest = path.join(process.cwd(), 'knowledge.md')
+
+  const knowledgeDest = path.join(ctx.root, 'knowledge.md')
   const knowledgeSrc = path.join(PACK_ROOT, 'templates', 'knowledge.md')
   if (!fs.existsSync(knowledgeDest) && fs.existsSync(knowledgeSrc)) {
     fs.copyFileSync(knowledgeSrc, knowledgeDest)
-    log(paint(c.green, `✓ created knowledge.md`) + paint(c.dim, ' (fill it in — every agent reads it)'))
+    log(paint(c.green, `✓ created ${knowledgeDest}`) + paint(c.dim, ' (fill it in — every agent reads it)'))
   } else {
-    log(paint(c.dim, `✓ knowledge file present or template missing`))
+    log(paint(c.dim, '✓ knowledge file present or template missing'))
   }
   log('')
   log(paint(c.bold, 'Ready.') + ' Try: ' + paint(c.cyan, 'freebuff') + paint(c.dim, '  then "use omf-team to <task>"'))
@@ -251,36 +278,40 @@ function cmdSetup(opts) {
 
 // ---- skills -----------------------------------------------------------------
 
-function skillsDir(opts) {
-  return path.join(requireInstalled(opts), 'skills')
+function listInstalledSkills(ctx) {
+  if (!fs.existsSync(ctx.skillsDir)) return []
+  return fs
+    .readdirSync(ctx.skillsDir)
+    .filter((n) => fs.existsSync(path.join(ctx.skillsDir, n, 'SKILL.md')))
+    .sort()
 }
 
-function cmdSkill(opts) {
+function cmdSkill(ctx, opts) {
   const [sub, arg] = opts._
-  const dir = () => {
-    const d = skillsDir(opts)
-    fs.mkdirSync(d, { recursive: true })
-    return d
-  }
   switch (sub) {
     case 'list':
     case undefined: {
-      const d = skillsDir(opts)
-      const files = fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.md') && f !== 'README.md') : []
-      if (files.length === 0) { log(paint(c.dim, 'No skills. Add one with: omf skill add <name>')); return }
-      log(paint(c.bold, `Skills (${files.length})`) + paint(c.dim, `  ${d}`))
-      for (const f of files) {
-        const src = fs.readFileSync(path.join(d, f), 'utf8')
+      const skills = listInstalledSkills(ctx)
+      if (skills.length === 0) {
+        log(paint(c.dim, `No skills in ${ctx.skillsDir}. Add one with: omf skill add <name>`))
+        return
+      }
+      log(paint(c.bold, `Skills (${skills.length})`) + paint(c.dim, `  ${ctx.skillsDir}`))
+      for (const name of skills) {
+        const src = fs.readFileSync(path.join(ctx.skillsDir, name, 'SKILL.md'), 'utf8')
         const desc = (src.match(/description:\s*(.+)/) || [])[1] || ''
-        log(`  ${paint(c.bold, f.replace(/\.md$/, '').padEnd(22))} ${paint(c.dim, desc.trim())}`)
+        log(`  ${paint(c.bold, name.padEnd(22))} ${paint(c.dim, desc.trim())}`)
       }
       return
     }
     case 'add': {
-      if (!arg) { err(paint(c.red, 'Usage: omf skill add <name>')); process.exit(1) }
-      const slug = arg.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '')
-      const file = path.join(dir(), `${slug}.md`)
-      if (fs.existsSync(file)) { err(paint(c.yellow, `Skill already exists: ${file}`)); process.exit(1) }
+      if (!arg) return usageExit('omf skill add <name>')
+      const { slug, dir, file } = safeSkill(ctx, arg)
+      if (fs.existsSync(file)) {
+        err(paint(c.yellow, `Skill already exists: ${file}`))
+        process.exit(1)
+      }
+      fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(file, skillTemplate(slug))
       log(paint(c.green, `✓ Created ${file}`))
       log(paint(c.dim, '  Edit it to describe when the skill applies and the steps to follow.'))
@@ -288,23 +319,29 @@ function cmdSkill(opts) {
     }
     case 'remove':
     case 'rm': {
-      if (!arg) { err(paint(c.red, 'Usage: omf skill remove <name>')); process.exit(1) }
-      const slug = arg.replace(/\.md$/, '')
-      const file = path.join(skillsDir(opts), `${slug}.md`)
-      if (!fs.existsSync(file)) { err(paint(c.yellow, `No such skill: ${slug}`)); process.exit(1) }
-      fs.rmSync(file)
-      log(paint(c.green, `✓ Removed ${file}`))
+      if (!arg) return usageExit('omf skill remove <name>')
+      const { dir } = safeSkill(ctx, arg)
+      if (!fs.existsSync(dir)) {
+        err(paint(c.yellow, `No such skill: ${arg}`))
+        process.exit(1)
+      }
+      fs.rmSync(dir, { recursive: true, force: true })
+      log(paint(c.green, `✓ Removed ${dir}`))
       return
     }
     case 'search': {
-      if (!arg) { err(paint(c.red, 'Usage: omf skill search <query>')); process.exit(1) }
-      const d = skillsDir(opts)
-      const files = fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.md')) : []
+      if (!arg) return usageExit('omf skill search <query>')
       const q = arg.toLowerCase()
-      const hits = files.filter((f) => (f + fs.readFileSync(path.join(d, f), 'utf8')).toLowerCase().includes(q))
-      if (hits.length === 0) { log(paint(c.dim, `No skills match "${arg}"`)); return }
+      const hits = listInstalledSkills(ctx).filter((name) => {
+        const body = fs.readFileSync(path.join(ctx.skillsDir, name, 'SKILL.md'), 'utf8')
+        return (name + body).toLowerCase().includes(q)
+      })
+      if (hits.length === 0) {
+        log(paint(c.dim, `No skills match "${arg}"`))
+        return
+      }
       log(paint(c.bold, `Matches for "${arg}":`))
-      hits.forEach((f) => log(`  ${f.replace(/\.md$/, '')}`))
+      hits.forEach((n) => log(`  ${n}`))
       return
     }
     default:
@@ -314,12 +351,24 @@ function cmdSkill(opts) {
   }
 }
 
+function safeSkill(ctx, name) {
+  try {
+    return skillDirFor(ctx, name)
+  } catch (e) {
+    err(paint(c.red, e.message))
+    process.exit(1)
+  }
+}
+
+function usageExit(usage) {
+  err(paint(c.red, `Usage: ${usage}`))
+  process.exit(1)
+}
+
 function skillTemplate(name) {
   return `---
 name: ${name}
 description: One line describing when an agent should use this skill.
-triggers: []
-source: manual
 ---
 
 Steps the agent follows when this skill applies:
@@ -331,54 +380,58 @@ Steps the agent follows when this skill applies:
 
 // ---- notifications ----------------------------------------------------------
 
-async function cmdNotify(opts) {
+async function cmdNotify(ctx, opts) {
   const [sub, ...rest] = opts._
   switch (sub) {
     case 'setup': {
       const channel = rest[0]
-      log(paint(c.bold, 'Notification setup'))
-      log('')
       if (!channel) {
+        log(paint(c.bold, 'Notification setup'))
+        log('')
         log('Pick a channel and pass its settings, e.g.:')
-        log(paint(c.cyan, '  omf notify setup file --value ./omf.log'))
+        log(paint(c.cyan, '  omf notify setup file ./omf-notify.log'))
         log(paint(c.cyan, '  omf notify setup telegram <bot-token> <chat-id>'))
         log(paint(c.cyan, '  omf notify setup discord <webhook-url>'))
         log(paint(c.cyan, '  omf notify setup slack <webhook-url>'))
         log('')
-        log(paint(c.dim, 'Or set keys directly: omf config set notifications.slack.webhook <url> --global'))
+        log(paint(c.dim, 'Secrets can also reference an env var: use "${SLACK_WEBHOOK}" as the value.'))
         return
       }
-      const scope = opts.global ? 'global' : 'project'
       if (channel === 'file') {
-        const v = rest[1] || (opts._.includes('--value') ? opts._[opts._.indexOf('--value') + 1] : './omf-notify.log')
-        setConfigValue(scope, 'notifications.file', v)
+        setConfigValue(ctx, 'notifications.file', rest[1] || './omf-notify.log')
       } else if (channel === 'telegram') {
-        if (rest.length < 3) { err(paint(c.red, 'Usage: omf notify setup telegram <token> <chatId>')); process.exit(1) }
-        setConfigValue(scope, 'notifications.telegram.token', rest[1])
-        setConfigValue(scope, 'notifications.telegram.chatId', rest[2])
+        if (rest.length < 3) return usageExit('omf notify setup telegram <token> <chatId>')
+        setConfigValue(ctx, 'notifications.telegram.token', rest[1])
+        setConfigValue(ctx, 'notifications.telegram.chatId', rest[2])
       } else if (channel === 'discord' || channel === 'slack') {
-        if (!rest[1]) { err(paint(c.red, `Usage: omf notify setup ${channel} <webhook-url>`)); process.exit(1) }
-        setConfigValue(scope, `notifications.${channel}.webhook`, rest[1])
+        if (!rest[1]) return usageExit(`omf notify setup ${channel} <webhook-url>`)
+        setConfigValue(ctx, `notifications.${channel}.webhook`, rest[1])
       } else {
-        err(paint(c.red, `Unknown channel: ${channel}`)); process.exit(1)
+        err(paint(c.red, `Unknown channel: ${channel}`))
+        process.exit(1)
       }
-      log(paint(c.green, `✓ Configured ${channel} notifications (${scope})`))
-      log(paint(c.dim, 'Test it with: omf notify test'))
+      log(paint(c.green, `✓ Configured ${channel} notifications (${ctx.scope})`))
+      log(paint(c.dim, 'Secrets are stored with 0600 permissions. Test with: omf notify test'))
       return
     }
     case 'status': {
-      const n = loadConfig().notifications || {}
-      const channels = Object.keys(n)
-      if (channels.length === 0) { log(paint(c.dim, 'No channels configured. Run: omf notify setup')); return }
+      const channels = Object.keys(loadConfig(ctx).notifications || {})
+      if (channels.length === 0) {
+        log(paint(c.dim, 'No channels configured. Run: omf notify setup'))
+        return
+      }
       log(paint(c.bold, 'Configured channels:'))
-      for (const ch of channels) log(`  ${paint(c.green, '●')} ${ch}`)
+      channels.forEach((ch) => log(`  ${paint(c.green, '●')} ${ch}`))
       return
     }
     case 'test':
     case 'send': {
-      const msg = rest.join(' ') || 'oh-my-freebuff test notification from {{projectName}} ✅'
-      const results = await sendNotification(msg)
-      if (results.length === 0) { err(paint(c.yellow, 'No channels configured — run: omf notify setup')); process.exit(1) }
+      const msg = rest.join(' ') || 'oh-my-freebuff test notification from {{projectName}}'
+      const results = await sendNotification(msg, ctx)
+      if (results.length === 0) {
+        err(paint(c.yellow, 'No channels configured — run: omf notify setup'))
+        process.exit(1)
+      }
       for (const r of results) {
         const mark = r.ok ? paint(c.green, '✓') : paint(c.red, '✗')
         log(`  ${mark} ${r.channel}${r.detail ? paint(c.dim, ' — ' + r.detail) : ''}`)
@@ -394,33 +447,42 @@ async function cmdNotify(opts) {
 
 // ---- doctor -----------------------------------------------------------------
 
-function cmdDoctor(opts) {
+function cmdDoctor(ctx) {
   let ok = true
   const check = (label, pass, detail) => {
     const mark = pass ? paint(c.green, '✓') : paint(c.red, '✗')
     log(`  ${mark} ${label}${detail ? paint(c.dim, '  ' + detail) : ''}`)
     if (!pass) ok = false
   }
+  const warn = (label, detail) => log(`  ${paint(c.yellow, '!')} ${label}${detail ? paint(c.dim, '  ' + detail) : ''}`)
+
   log(paint(c.bold, 'oh-my-freebuff doctor'))
   log('')
-  const nodeMajor = Number(process.versions.node.split('.')[0])
-  check('Node >= 18', nodeMajor >= 18, `found v${process.versions.node}`)
+  check('Node >= 18', Number(process.versions.node.split('.')[0]) >= 18, `found v${process.versions.node}`)
   const cli = which('freebuff') || which('codebuff') || which('cb')
   check('Freebuff or Codebuff CLI on PATH', !!cli, cli || 'npm i -g freebuff')
 
-  const packDest = installedPackDir(opts)
-  const installed = fs.existsSync(packDest)
-  check('Pack installed', installed, installed ? packDest : `run: omf install${opts.global ? ' --global' : ''}`)
+  const installed = fs.existsSync(ctx.packDir)
+  check('Pack installed', installed, installed ? ctx.packDir : `run: omf install${ctx.scope === 'global' ? ' --global' : ''}`)
   if (installed) {
-    const typesOk = fs.existsSync(path.join(resolveAgentsDir(opts), 'types', 'agent-definition.ts'))
-    check('types/agent-definition present', typesOk, typesOk ? '' : 'run: omf update')
-    const count = fs.readdirSync(packDest).filter((f) => f.endsWith('.ts')).length
-    check('agent files present', count > 0, `${count} agents`)
+    check('types/agent-definition present', fs.existsSync(ctx.typesFile), fs.existsSync(ctx.typesFile) ? '' : 'run: omf update')
+    check('agent files present', fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts')).length > 0, `${fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts')).length} agents`)
+    const skills = fs.existsSync(ctx.skillsDir) ? fs.readdirSync(ctx.skillsDir).filter((n) => fs.existsSync(path.join(ctx.skillsDir, n, 'SKILL.md'))).length : 0
+    check('skills discoverable (.agents/skills/*/SKILL.md)', skills > 0, `${skills} skill(s)`)
   }
-  const preset = getConfigValue('modelPreset')
+  const preset = getConfigValue(ctx, 'modelPreset')
   if (preset) check('model preset', true, preset)
-  const nch = Object.keys(loadConfig().notifications || {})
-  if (nch.length) check('notifications', true, nch.join(', '))
+
+  // Secret hygiene: if secrets live in the project config, it should be ignored.
+  if (ctx.scope !== 'global' && fs.existsSync(ctx.configFile)) {
+    const cfg = loadConfig(ctx)
+    const hasSecrets = JSON.stringify(cfg.notifications || {}).match(/token|webhook|password/i)
+    if (hasSecrets) {
+      const ignored = isGitIgnored(ctx.root, path.relative(ctx.root, ctx.configFile) || '.freebuff/omf.jsonc')
+      if (ignored === false) warn('.freebuff is NOT git-ignored', 'secrets could be committed — add .freebuff/ to .gitignore')
+      else if (ignored === true) check('.freebuff git-ignored', true, 'secrets protected')
+    }
+  }
 
   log('')
   log(ok ? paint(c.green, 'All good.') : paint(c.yellow, 'Some checks failed — see above.'))
@@ -436,20 +498,20 @@ ${paint(c.bold, 'Usage')}
   omf <command> [options]
 
 ${paint(c.bold, 'Setup')}
-  ${paint(c.cyan, 'setup')}        Install the pack + seed config + knowledge.md (one-shot)
-  ${paint(c.cyan, 'install')}      Copy the agent pack into this project's .agents
-  ${paint(c.cyan, 'update')}       Re-copy the latest pack (overwrites installed copy)
-  ${paint(c.cyan, 'uninstall')}    Remove the installed pack
+  ${paint(c.cyan, 'setup')}        Install pack + seed config + knowledge.md (one-shot)
+  ${paint(c.cyan, 'install')}      Copy the agent pack into .agents
+  ${paint(c.cyan, 'update')}       Re-copy the pack (keeps your preset)
+  ${paint(c.cyan, 'uninstall')}    Remove the pack
   ${paint(c.cyan, 'doctor')}       Check your setup
 
 ${paint(c.bold, 'Agents & models')}
-  ${paint(c.cyan, 'list')}                 List the agents in the pack
+  ${paint(c.cyan, 'list')}                 List the agents
   ${paint(c.cyan, 'preset')} [name]        Show or apply a model preset (budget|balanced|premium)
 
 ${paint(c.bold, 'Config')}
-  ${paint(c.cyan, 'config')}               Print effective config
-  ${paint(c.cyan, 'config get')} <key>     Read a config value
-  ${paint(c.cyan, 'config set')} <k> <v>   Write a config value (--global for user scope)
+  ${paint(c.cyan, 'config')}               Print effective config (secrets hidden)
+  ${paint(c.cyan, 'config get')} <key>     Read a value
+  ${paint(c.cyan, 'config set')} <k> <v>   Write a value (--global for user scope)
 
 ${paint(c.bold, 'Skills')}
   ${paint(c.cyan, 'skill list')}           List custom skills
@@ -464,15 +526,9 @@ ${paint(c.bold, 'Notifications')}
 
 ${paint(c.bold, 'Options')}
   -g, --global       Target ~/.agents and user-scope config
-  -d, --dir <path>   Operate on <path>/.agents
+  -d, --dir <path>   Operate on <path> (its .agents and .freebuff)
   -f, --force        Overwrite an existing install
-
-${paint(c.bold, 'Examples')}
-  omf setup
-  omf preset budget
-  omf skill add verify-before-done
-  omf notify setup slack https://hooks.slack.com/...
-  omf notify test`)
+      --show-secrets Reveal secrets in "config" output`)
 }
 
 // ---- dispatch ---------------------------------------------------------------
@@ -480,17 +536,18 @@ ${paint(c.bold, 'Examples')}
 async function main() {
   const [, , cmd, ...rest] = process.argv
   const opts = parseArgs(rest)
+  const ctx = resolveContext(opts)
   switch (cmd) {
-    case 'install': case 'i': return opts.help ? cmdHelp() : cmdInstall(opts)
-    case 'update': case 'up': return cmdInstall({ ...opts, force: true })
-    case 'uninstall': case 'rm': return cmdUninstall(opts)
-    case 'setup': return cmdSetup(opts)
+    case 'install': case 'i': return opts.help ? cmdHelp() : cmdInstall(ctx, opts)
+    case 'update': case 'up': return cmdInstall(ctx, { ...opts, force: true })
+    case 'uninstall': case 'rm': return cmdUninstall(ctx)
+    case 'setup': return cmdSetup(ctx, opts)
     case 'list': case 'ls': return cmdList()
-    case 'preset': return cmdPreset(opts)
-    case 'config': return cmdConfig(opts)
-    case 'skill': case 'skills': return cmdSkill(opts)
-    case 'notify': return cmdNotify(opts)
-    case 'doctor': return cmdDoctor(opts)
+    case 'preset': return cmdPreset(ctx, opts)
+    case 'config': return cmdConfig(ctx, opts)
+    case 'skill': case 'skills': return cmdSkill(ctx, opts)
+    case 'notify': return cmdNotify(ctx, opts)
+    case 'doctor': return cmdDoctor(ctx)
     case 'version': case '--version': case '-v': return log(version())
     case undefined: case 'help': case '--help': case '-h': return cmdHelp()
     default:
