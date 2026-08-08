@@ -1,0 +1,46 @@
+{
+  "name": "oh-my-freebuff",
+  "version": "0.1.0",
+  "description": "Teams-first multi-agent orchestration pack for Freebuff / Codebuff. Curated agents, orchestrators and smart model routing you drop into any project's .agents folder.",
+  "keywords": [
+    "freebuff",
+    "codebuff",
+    "ai",
+    "agents",
+    "multi-agent",
+    "orchestration",
+    "coding-agent",
+    "oh-my"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "omf": "bin/omf.mjs",
+    "oh-my-freebuff": "bin/omf.mjs"
+  },
+  "files": [
+    "bin",
+    "agents",
+    "skills",
+    "templates",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "omf": "node bin/omf.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/c8dhjp4tyv-bit/oh-my-freebuff.git"
+  },
+  "homepage": "https://github.com/c8dhjp4tyv-bit/oh-my-freebuff#readme",
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
