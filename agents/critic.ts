@@ -3,9 +3,9 @@ import type { AgentDefinition } from '../types/agent-definition'
 /**
  * critic — strategic, big-picture pushback.
  *
- * Where the reviewer hunts line-level defects, the critic questions the whole
- * approach: is this the right thing to build, is the design sound, what's the
- * hidden cost. Read-only devil's advocate used by omf-ralplan.
+ * The reviewer checks line-level defects; the critic questions the approach:
+ * whether it's the right thing to build, whether the design holds, what it costs
+ * later. Read-only, used by omf-ralplan.
  */
 const critic: AgentDefinition = {
   id: 'critic',

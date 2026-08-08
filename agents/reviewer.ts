@@ -1,11 +1,10 @@
 import type { AgentDefinition } from '../types/agent-definition'
 
 /**
- * Reviewer — critical read of a change for correctness and quality.
+ * Reviewer — reads a change for correctness and quality.
  *
- * Read-only and adversarial by design. Runs on a strong model because catching
- * the subtle bug is the whole point. Reports findings ranked by severity; it
- * does not fix — that keeps the review honest and lets the orchestrator decide.
+ * Read-only, on a strong model. Reports findings ranked by severity and does not
+ * edit, so the orchestrator decides what to act on.
  */
 const reviewer: AgentDefinition = {
   id: 'reviewer',

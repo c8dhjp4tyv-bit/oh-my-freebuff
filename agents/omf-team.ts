@@ -4,9 +4,8 @@ import type { AgentDefinition } from '../types/agent-definition'
  * omf-team — the canonical staged pipeline.
  *
  * A lead that runs a research → design → plan → implement → review → verify
- * pipeline, delegating each stage to the specialist best suited to it and
- * looping back when review finds problems. This is the default "just get it
- * done well" entry point.
+ * pipeline, delegating each stage to a specialist and looping back when review
+ * finds problems. The default entry point.
  *
  * Orchestration is prompt-driven: the lead decides when to fan out work in
  * parallel and when to serialize, using the spawn_agents tool over the

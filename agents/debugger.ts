@@ -3,9 +3,8 @@ import type { AgentDefinition } from '../types/agent-definition'
 /**
  * Debugger — root-causes a failure before touching code.
  *
- * Strong reasoning model. Forms hypotheses, gathers evidence, and only then
- * proposes the minimal fix. Guards against the "change random things until it
- * passes" failure mode.
+ * Reasoning model. Forms a hypothesis, confirms it with evidence, then makes the
+ * minimal fix — rather than changing things at random until the test passes.
  */
 const debugger_: AgentDefinition = {
   id: 'debugger',

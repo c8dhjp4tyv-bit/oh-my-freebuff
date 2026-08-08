@@ -1,11 +1,10 @@
 import type { AgentDefinition } from '../types/agent-definition'
 
 /**
- * file-picker — ultra-fast "which files matter" agent.
+ * file-picker — returns the files that matter for a task.
  *
- * The cheapest agent in the pack. Given a task, it returns the shortlist of
- * files worth reading, with a one-line reason each. Orchestrators spawn it to
- * seed context cheaply instead of reading the whole tree with an expensive model.
+ * Cheapest agent in the pack. Orchestrators spawn it to shortlist files before
+ * spending a stronger model on reading them.
  */
 const filePicker: AgentDefinition = {
   id: 'file-picker',

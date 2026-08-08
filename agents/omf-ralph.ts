@@ -3,11 +3,9 @@ import type { AgentDefinition } from '../types/agent-definition'
 /**
  * omf-ralph — persistent verify-fix loop.
  *
- * Named after the "Ralph" pattern: pick a single, machine-checkable success
- * condition (a command that must exit 0 — tests green, typecheck clean, build
- * passing) and grind on it until it's actually satisfied. Refuses to declare
- * victory on a red check. Best for "make CI pass", "get the suite green",
- * "fix all type errors".
+ * Pick one machine-checkable success condition (a command that must exit 0:
+ * tests, typecheck, build) and work until it passes. Won't report success on a
+ * red check. For "make CI pass", "get the suite green", "fix all type errors".
  */
 const omfRalph: AgentDefinition = {
   id: 'omf-ralph',

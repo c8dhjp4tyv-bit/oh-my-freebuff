@@ -42,9 +42,8 @@ according to its tier, and remembers the choice in `.freebuff/omf.jsonc` so
 | panel-b | `z-ai/glm-4.7-flash` | `deepseek/deepseek-r1-0528` | `openai/gpt-5.1` |
 | panel-c | `qwen/qwen3-coder-flash` | `qwen/qwen3-coder-plus` | `google/gemini-2.5-pro` |
 
-> The table above is the source of truth in `models.json`. A test
-> (`npm test`) asserts the shipped agent defaults match the `balanced` column,
-> so this stays honest.
+The table is generated from `models.json`. `npm test` asserts the shipped agent
+defaults match the `balanced` column.
 
 ## Per-agent overrides
 

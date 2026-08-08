@@ -1,11 +1,10 @@
 import type { AgentDefinition } from '../types/agent-definition'
 
 /**
- * Implementer — writes the actual code for one well-scoped task.
+ * Implementer — writes the code for one scoped task.
  *
- * The workhorse. Given a clear task, it edits files, runs commands to check
- * itself, and reports what it changed. Kept deliberately focused: it does one
- * task well rather than wandering the whole backlog.
+ * Edits files, runs commands to check itself, reports what changed. Handles one
+ * task rather than the whole backlog.
  */
 const implementer: AgentDefinition = {
   id: 'implementer',

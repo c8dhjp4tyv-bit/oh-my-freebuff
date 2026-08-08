@@ -3,8 +3,8 @@ import type { AgentDefinition } from '../types/agent-definition'
 /**
  * refactorer — behavior-preserving code improvement.
  *
- * Restructures code without changing what it does, proving it with the tests.
- * The workhorse behind omf-ultrawork's parallel slices.
+ * Restructures code without changing what it does, checked against the tests.
+ * Used by omf-ultrawork for parallel slices.
  */
 const refactorer: AgentDefinition = {
   id: 'refactorer',
