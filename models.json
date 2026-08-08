@@ -1,0 +1,37 @@
+{
+  "$comment": "Model presets for oh-my-freebuff. Each preset maps an agent TIER to an OpenRouter model id. `omf preset <name>` rewrites the model: field of every installed agent according to its tier in agents.manifest.json. All ids are valid OpenRouter models (https://openrouter.ai/models); edit freely.",
+  "defaultPreset": "balanced",
+  "tiers": ["fast", "coding", "strong", "reasoning", "panel-a", "panel-b", "panel-c"],
+  "presets": {
+    "budget": {
+      "description": "Cheapest. Open models only. Good for high-volume, low-stakes work.",
+      "fast": "z-ai/glm-4.7-flash",
+      "coding": "qwen/qwen3-coder-flash",
+      "strong": "z-ai/glm-4.6",
+      "reasoning": "z-ai/glm-4.7-flash",
+      "panel-a": "z-ai/glm-4.6",
+      "panel-b": "z-ai/glm-4.7-flash",
+      "panel-c": "qwen/qwen3-coder-flash"
+    },
+    "balanced": {
+      "description": "Default. Strong open models; good quality per dollar.",
+      "fast": "deepseek/deepseek-chat-v3-0324",
+      "coding": "qwen/qwen3-coder-plus",
+      "strong": "z-ai/glm-4.7",
+      "reasoning": "deepseek/deepseek-r1-0528",
+      "panel-a": "z-ai/glm-4.7",
+      "panel-b": "deepseek/deepseek-r1-0528",
+      "panel-c": "qwen/qwen3-coder-plus"
+    },
+    "premium": {
+      "description": "Best quality, highest cost. Frontier models for the heavy tiers.",
+      "fast": "google/gemini-2.5-flash",
+      "coding": "anthropic/claude-sonnet-4.5",
+      "strong": "anthropic/claude-sonnet-4.5",
+      "reasoning": "openai/gpt-5.1",
+      "panel-a": "anthropic/claude-sonnet-4.5",
+      "panel-b": "openai/gpt-5.1",
+      "panel-c": "google/gemini-2.5-pro"
+    }
+  }
+}

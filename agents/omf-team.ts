@@ -31,13 +31,18 @@ const omfTeam: AgentDefinition = {
     'set_output',
   ],
   spawnableAgents: [
+    'file-picker',
     'researcher',
     'architect',
+    'designer',
     'planner',
     'implementer',
+    'refactorer',
     'reviewer',
+    'security-reviewer',
     'tester',
     'debugger',
+    'data-scientist',
     'docs-writer',
   ],
   inputSchema: {
@@ -56,7 +61,7 @@ Pipeline (adapt to the task's size — skip stages that add no value for a trivi
 4. IMPLEMENT. For each task, spawn an 'implementer' with a tight, self-contained brief (the task, the target files, the definition of done). Run independent tasks in parallel; serialize dependent ones.
 5. TEST. Spawn 'tester' to add/run tests. Spawn 'debugger' for any failure whose cause isn't obvious.
 6. REVIEW. Spawn 'reviewer' on the finished change. If it returns must-fix findings, loop back to IMPLEMENT/DEBUG to resolve them, then re-review. Do not declare done with unresolved must-fix findings.
-7. Optionally spawn 'docs-writer' if docs need updating.
+7. Optional stages, when the task calls for them: 'designer' for UI/API surface before implementing, 'security-reviewer' for anything touching auth/untrusted input/secrets, 'refactorer' for cleanup, 'data-scientist' for data work, 'docs-writer' if docs need updating. Use 'file-picker' as a cheap first pass to shortlist files before spending a researcher.
 
 Rules of good delegation:
 - Give each sub-agent everything it needs and nothing it doesn't. They start fresh — no shared memory. Paste the exact files, constraints, and success criteria into their prompt.

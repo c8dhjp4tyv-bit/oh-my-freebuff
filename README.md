@@ -52,52 +52,109 @@ omf doctor
 
 ### Orchestrators — your entry points
 
+Nine orchestration modes — pick by the shape of the task (full guide in
+[docs/MODES.md](./docs/MODES.md)):
+
 | Agent | Use it when you want… |
 | --- | --- |
-| **omf-team** | The full pipeline. Research → design → plan → implement → test → review, looping back on review findings. The default "just get it done well." |
-| **omf-autopilot** | Lower ceremony. One capable agent drives the task directly, pulling in a researcher/reviewer/debugger only when it helps. Good for well-defined tasks. |
-| **omf-ralph** | A persistent verify-fix loop. Give it a check command (tests, typecheck, build) and it grinds until that command is actually green — and refuses to fake it. |
+| **omf-team** | The default. Research → design → plan → implement → test → review, looping back on review findings. |
+| **omf-autopilot** | Lower ceremony. One agent drives directly, pulling in helpers only when needed. |
+| **omf-pipeline** | Strict sequential stages with a gate between each. Order & auditability. |
+| **omf-ultrawork** | Many independent edits in parallel (rename everywhere, lint the repo). |
+| **omf-ultraqa** | Cycle the full quality gate (tests + typecheck + lint + build) to zero. |
+| **omf-ralph** | Grind one check command (tests/build) until it's actually green. |
+| **omf-ralplan** | Competing plans, critiqued against each other, synthesized into one. |
+| **omf-advisor** | A cross-model second opinion: same question to three different models. |
+| **omf-deep-interview** | Turn a vague request into a precise spec via a few sharp questions. |
 
 ### Specialists — spawned by the orchestrators (or call them directly)
 
 | Agent | Role | Tier |
 | --- | --- | --- |
-| **researcher** | Read-only context gathering across code + web | fast/cheap |
+| **file-picker** | Ultra-fast "which files matter" shortlist | fast |
+| **researcher** | Read-only context gathering across code + web | fast |
 | **architect** | High-level technical design before big changes | strong |
+| **designer** | UI/UX and API-surface design | strong |
 | **planner** | Turns a goal/design into an ordered, checkable todo list | strong |
 | **implementer** | Writes the code for one well-scoped task | coding |
+| **refactorer** | Behavior-preserving restructuring, proven by tests | coding |
 | **reviewer** | Adversarial correctness/quality review; reports, doesn't rubber-stamp | strong |
+| **security-reviewer** | Attacker's-eye audit with concrete exploit scenarios | strong |
+| **critic** | Strategic pushback on the approach, not the syntax | strong |
 | **tester** | Writes and runs tests, reports pass/fail honestly | coding |
-| **debugger** | Root-causes a failure before touching code | strong/reasoning |
-| **docs-writer** | READMEs, comments, changelogs, usage guides | fast/cheap |
+| **debugger** | Root-causes a failure before touching code | reasoning |
+| **data-scientist** | Data exploration, queries, metrics grounded in real data | strong |
+| **docs-writer** | READMEs, comments, changelogs, usage guides | fast |
+| **advisor-a/b/c** | Three voices of the multi-model advisor panel | panel |
 
-### Smart model routing
+### Smart model routing — `budget` · `balanced` · `premium`
 
-Agents are pre-assigned to model tiers so you don't pay for a reasoning model to
-find a file, or trust a cheap model to catch a subtle bug:
+Agents are assigned to tiers so you don't pay for a reasoning model to find a
+file, or trust a cheap model to catch a subtle bug. Switch the whole pack's cost
+profile with one command:
 
-- **Fast/cheap** (`deepseek-chat-v3`, `glm-4.x-flash`, `gemini-flash`) → research, docs.
-- **Coding** (`qwen3-coder-plus`) → implementation and tests.
-- **Strong/reasoning** (`glm-4.7`, `deepseek-r1`) → architecture, review, debugging, and the team lead.
+```bash
+omf preset budget      # cheapest, open models only
+omf preset balanced    # default — strong open models, good value
+omf preset premium     # frontier models (Claude/GPT/Gemini), highest cost
+```
 
-Every agent is a plain file — open `.agents/oh-my-freebuff/<agent>.ts` and change
-the `model` line to any [OpenRouter model id](https://openrouter.ai/models) you prefer.
+`omf preset` rewrites every agent's `model:` field per its tier and remembers the
+choice. Full tier→model matrix in
+[docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md). Every agent is a
+plain file, so you can also pin any single one to any
+[OpenRouter model](https://openrouter.ai/models) by hand.
 
 ## CLI reference
 
 ```
-omf install      Copy the agent pack into this project's .agents directory
-omf update       Re-copy the latest pack (overwrites the installed copy)
-omf uninstall    Remove the installed pack
-omf list         List the agents in the pack
-omf doctor       Check your setup
-omf help         Show help
+Setup
+  omf setup                 Install pack + seed config + knowledge.md (one-shot)
+  omf install               Copy the agent pack into this project's .agents
+  omf update                Re-copy the latest pack (overwrites installed copy)
+  omf uninstall             Remove the installed pack
+  omf doctor                Check your setup
 
-Options:
-  -g, --global       Target ~/.agents instead of ./.agents
-  -d, --dir <path>   Install into <path>/.agents
-  -f, --force        Overwrite an existing install
+Agents & models
+  omf list                  List the agents in the pack
+  omf preset [name]         Show or apply a model preset (budget|balanced|premium)
+
+Config
+  omf config                Print effective config
+  omf config get <key>      Read a value
+  omf config set <k> <v>    Write a value (--global for user scope)
+
+Skills
+  omf skill list            List custom skills
+  omf skill add <name>      Scaffold a new skill
+  omf skill remove <name>   Delete a skill
+  omf skill search <q>      Search skills
+
+Notifications
+  omf notify setup <ch>     Configure telegram|discord|slack|file
+  omf notify test           Send a test notification
+  omf notify status         Show configured channels
+
+Options
+  -g, --global              Target ~/.agents and user-scope config
+  -d, --dir <path>          Operate on <path>/.agents
+  -f, --force               Overwrite an existing install
 ```
+
+## Notifications
+
+Get pinged when a long run finishes. Configure a channel, then wire
+`hooks/notify.mjs` into any completion callback (or call `omf notify test`):
+
+```bash
+omf notify setup slack https://hooks.slack.com/services/...
+omf notify setup telegram <bot-token> <chat-id>
+omf notify setup file ./omf-notify.log
+omf notify test
+```
+
+Channels: **Telegram, Discord, Slack, file**. Messages support `{{projectName}}`
+and other template variables.
 
 ## How it fits together
 
@@ -124,6 +181,12 @@ The pack is just files. After `omf install`:
 - **Add your own agent:** drop a new `.ts` file next to the others exporting an
   `AgentDefinition` (types live in `.agents/types/agent-definition.ts`), and add
   its id to an orchestrator's `spawnableAgents`.
+
+## Docs
+
+- [docs/MODES.md](./docs/MODES.md) — every orchestration mode and when to use it
+- [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md) — tiers, presets, the full model matrix
+- [docs/PARITY.md](./docs/PARITY.md) — what's ported from oh-my-claudecode, what's adapted, what's intentionally out of scope
 
 ## Requirements
 
@@ -186,23 +249,31 @@ Kurulumu kontrol et: `omf doctor`
 
 ### Pakette ne var
 
-**Orkestratörler (giriş noktaların):**
+**9 orkestrasyon modu (giriş noktaların):** `omf-team` (tam hat, varsayılan),
+`omf-autopilot` (otonom), `omf-pipeline` (sıralı, denetlenebilir), `omf-ultrawork`
+(paralel toplu düzenleme), `omf-ultraqa` (tüm kalite kapısını yeşile çevir),
+`omf-ralph` (tek komutu yeşile çevir), `omf-ralplan` (planlama konsensüsü),
+`omf-advisor` (çok-model ikinci görüş), `omf-deep-interview` (belirsiz isteği
+Sokratik sorularla nete çevir). Ayrıntı: [docs/MODES.md](./docs/MODES.md).
 
-- **omf-team** — Tam hat: araştır → tasarla → planla → uygula → test et → incele,
-  inceleme bulgularında geri döner. Varsayılan "düzgünce hallet".
-- **omf-autopilot** — Daha az tören. Yetenekli tek ajan görevi doğrudan sürdürür,
-  gerektiğinde araştırmacı/inceleyici/hata-ayıklayıcı çağırır. İyi tanımlı görevler için.
-- **omf-ralph** — Israrcı doğrula-düzelt döngüsü. Bir kontrol komutu ver (test,
-  tip kontrolü, build); o komut gerçekten yeşile dönene kadar uğraşır ve numara yapmaz.
+**26 ajan toplam.** Uzmanlar: file-picker, researcher, architect, designer,
+planner, implementer, refactorer, reviewer, security-reviewer, critic, tester,
+debugger, data-scientist, docs-writer, advisor-a/b/c. Orkestratörler bunları
+`spawn_agents` ile çağırır; doğrudan da kullanabilirsin.
 
-**Uzman ajanlar:** researcher, architect, planner, implementer, reviewer, tester,
-debugger, docs-writer. Orkestratörler bunları `spawn_agents` ile çağırır; doğrudan
-da kullanabilirsin.
+**Akıllı model yönlendirme:** her ajan bir *tier*'a atanır, presetler tier'ları
+gerçek modellere eşler. Tek komutla maliyet profilini değiştir:
 
-**Akıllı model yönlendirme:** dosya bulmak için pahalı bir düşünme modeli
-ödemezsin, ince bir hatayı yakalaması için de ucuz modele güvenmezsin. Her ajan
-düz bir dosya — `.agents/oh-my-freebuff/<ajan>.ts` içindeki `model` satırını
-istediğin [OpenRouter model id](https://openrouter.ai/models)'siyle değiştir.
+```bash
+omf preset budget      # en ucuz, sadece açık modeller
+omf preset balanced    # varsayılan — güçlü açık modeller, iyi değer
+omf preset premium     # frontier modeller (Claude/GPT/Gemini)
+```
+
+Tam tier→model matrisi: [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md).
+
+**Bildirimler:** Telegram/Discord/Slack/dosya — `omf notify setup <kanal>` ve
+`omf notify test`. Uzun bir iş bitince haber al.
 
 ### Özelleştirme
 

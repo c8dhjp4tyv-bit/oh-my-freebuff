@@ -1,0 +1,35 @@
+{
+  "$comment": "Maps each agent id to a model tier. `omf preset` uses this + models.json to route every agent to the right model. To add an agent, add its id here.",
+  "tiers": {
+    "file-picker": "fast",
+    "researcher": "fast",
+    "docs-writer": "fast",
+
+    "implementer": "coding",
+    "tester": "coding",
+    "refactorer": "coding",
+    "omf-autopilot": "coding",
+
+    "architect": "strong",
+    "designer": "strong",
+    "planner": "strong",
+    "reviewer": "strong",
+    "security-reviewer": "strong",
+    "critic": "strong",
+    "data-scientist": "strong",
+    "omf-team": "strong",
+    "omf-ultrawork": "strong",
+    "omf-ultraqa": "strong",
+    "omf-ralplan": "strong",
+    "omf-advisor": "strong",
+    "omf-deep-interview": "strong",
+    "omf-pipeline": "strong",
+
+    "debugger": "reasoning",
+    "omf-ralph": "reasoning",
+
+    "advisor-a": "panel-a",
+    "advisor-b": "panel-b",
+    "advisor-c": "panel-c"
+  }
+}

@@ -23,6 +23,17 @@ const KNOWN_TOOLS = new Set([
 const files = fs.readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.ts'))
 const idsFromFilenames = new Set(files.map((f) => f.replace(/\.ts$/, '')))
 
+// jsonc parser mirrored from bin/lib.mjs so tests stay dependency-free.
+function parseJsonc(text) {
+  return JSON.parse(
+    text
+      .replace(/\\"|"(?:\\"|[^"])*"|(\/\/[^\n\r]*|\/\*[\s\S]*?\*\/)/g, (m, g) => (g ? '' : m))
+      .replace(/,(\s*[}\]])/g, '$1'),
+  )
+}
+const manifest = parseJsonc(fs.readFileSync(path.join(ROOT, 'agents.manifest.json'), 'utf8')).tiers
+const models = parseJsonc(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))
+
 /** Pull a string field like `id: 'x'` from source text. */
 function field(src, name) {
   const m = src.match(new RegExp(`\\b${name}:\\s*'([^']+)'`))
@@ -37,7 +48,42 @@ function arrayField(src, name) {
 }
 
 test('there is a non-trivial number of agents', () => {
-  assert.ok(files.length >= 8, `expected >= 8 agents, found ${files.length}`)
+  assert.ok(files.length >= 19, `expected >= 19 agents, found ${files.length}`)
+})
+
+test('every agent has a tier in the manifest and vice versa', () => {
+  for (const id of idsFromFilenames) {
+    assert.ok(manifest[id], `agent "${id}" is missing from agents.manifest.json`)
+  }
+  for (const id of Object.keys(manifest)) {
+    assert.ok(idsFromFilenames.has(id), `manifest lists "${id}" but no such agent file exists`)
+  }
+})
+
+test('models.json presets are complete for every tier', () => {
+  const tiers = new Set(models.tiers)
+  const usedTiers = new Set(Object.values(manifest))
+  for (const t of usedTiers) {
+    assert.ok(tiers.has(t), `manifest uses tier "${t}" not declared in models.json tiers`)
+  }
+  assert.ok(models.presets[models.defaultPreset], 'defaultPreset must exist in presets')
+  for (const [name, preset] of Object.entries(models.presets)) {
+    for (const t of usedTiers) {
+      assert.ok(preset[t], `preset "${name}" is missing tier "${t}"`)
+      assert.match(preset[t], /^[\w.-]+\/[\w.:-]+$/, `preset "${name}.${t}" is not a provider/model id`)
+    }
+  }
+})
+
+test('shipped default models match the balanced preset (per tier)', () => {
+  const balanced = models.presets.balanced
+  for (const file of files) {
+    const src = fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8')
+    const id = src.match(/\bid:\s*'([^']+)'/)[1]
+    const model = src.match(/^\s*model:\s*'([^']+)'/m)[1]
+    const tier = manifest[id]
+    assert.equal(model, balanced[tier], `${file}: default model should equal balanced.${tier}`)
+  }
 })
 
 for (const file of files) {
