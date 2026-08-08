@@ -4,6 +4,49 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.1]
+
+Second review pass. Closes the safe install/update/uninstall gaps.
+
+### Fixed
+
+- **`uninstall`/`update` can no longer touch a user's skill.** The installer
+  records what it created and each file's hash in `.freebuff/omf-managed.json`.
+  A skill is only refreshed or removed if the pack installed it *and* the user
+  hasn't modified it since — a user's own skill (even one that shares a shipped
+  name) is never overwritten or deleted, `--force` included.
+- **`omf config get <secret-key>` no longer prints the secret.** Redaction now
+  keys off the requested path, so `config get notifications.telegram.token` is
+  masked unless `--show-secrets` is passed. Regression-tested.
+- **`omf-ralph` verification is actually deterministic.** The loop appends an
+  exit-code sentinel to the command and stops only on a real exit 0, instead of
+  pattern-matching output (so "0 failures" no longer reads as a failure).
+  `maxIterations` is validated as a positive integer.
+- **Malformed config no longer causes silent data loss.** Writes read the
+  existing file strictly (missing → `{}`, malformed → abort) and are written
+  atomically (temp + rename) at `0600`. Prototype-polluting key segments
+  (`__proto__`, `constructor`, `prototype`) are rejected.
+
+### Changed
+
+- Skill-name validation matches Codebuff's rule (1–64 chars, lowercase
+  alphanumeric segments, single non-leading/trailing hyphens) so a name the CLI
+  accepts is one Codebuff accepts.
+- `omf-pipeline` spawns one implementer per plan task with a gate between each,
+  resolving the conflict with the implementer's one-task contract.
+- Notification HTTP posts have a 10s timeout.
+- Node support is `>=20`; CI runs 20/22/24 with a lockfile and `npm ci`.
+- `models.json` carries `lastReviewed` / `costClass` metadata to make preset
+  drift (especially `premium`) a maintained thing.
+
+### Added
+
+- Opt-in runtime smoke test (`npm run smoke`) that loads the installed agents and
+  skills through the real `@codebuff/sdk` loaders (`loadLocalAgents`/`loadSkills`).
+- Unit + end-to-end tests for every fix above (config fail-safe, proto-guard,
+  secret-path redaction, skill-name rules, receipt hashing, and ownership-safe
+  uninstall/update). Suite is now 163 tests.
+
 ## [0.2.0]
 
 Hardening pass toward a install-anywhere release. Addresses an external review.

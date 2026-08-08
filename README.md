@@ -129,16 +129,19 @@ Options
 ## Notifications
 
 Get a ping when a long run finishes. Configure a channel, then call
-`hooks/notify.mjs` from wherever your workflow signals completion:
+`hooks/notify.mjs` from wherever your workflow signals completion.
+
+Prefer keeping the secret in an environment variable rather than shell history:
 
 ```bash
-omf notify setup slack https://hooks.slack.com/services/...
-omf notify setup telegram <bot-token> <chat-id>
-omf notify setup file ./omf-notify.log
+export SLACK_WEBHOOK=https://hooks.slack.com/services/...
+omf notify setup slack '${SLACK_WEBHOOK}'      # stored as a reference, resolved at send
 omf notify test
 ```
 
-Channels: Telegram, Discord, Slack, and a local file. Messages support
+Passing the value directly also works (`omf notify setup slack <url>`), but it
+lands in your shell history. Channels: Telegram, Discord, Slack, and a local
+file. Secrets are stored `0600` and redacted in `omf config`. Messages support
 `{{projectName}}` and other variables.
 
 ## Skills
@@ -185,16 +188,28 @@ omf-team
   └─ reviewer                   must-fix loop, then done
 ```
 
+## What goes where
+
+After install:
+
+- **Pack agents** live under `.agents/oh-my-freebuff/` (fully owned by the pack).
+- **Skills** install to the shared `.agents/skills/<name>/SKILL.md`.
+- **The type shim** goes to `.agents/types/agent-definition.ts` — only if you
+  don't already have one; an existing (or Codebuff-generated) one is left alone.
+
 ## Customize
 
-After install, everything is a file under `.agents/oh-my-freebuff/`:
-
 - Change a model: edit the `model:` line in an agent file (a later `omf preset`
-  will overwrite it — to make it stick, edit `agents.manifest.json` or
-  `models.json`).
+  overwrites it — to make it stick, edit `agents.manifest.json` or `models.json`).
 - Change behavior: edit the agent's `instructionsPrompt`.
 - Add an agent: drop a `.ts` file that exports an `AgentDefinition` and add its
   id to an orchestrator's `spawnableAgents`.
+
+> **Note on `omf update`:** it replaces the files in `.agents/oh-my-freebuff/`,
+> so edits made directly to installed pack agents are overwritten. Keep durable
+> changes in `agents.manifest.json` / `models.json`, or copy an agent to a new
+> id. Your **skills** are safe — `update` and `uninstall` only touch skills the
+> pack installed and you haven't modified (tracked in `.freebuff/omf-managed.json`).
 
 ## Requirements
 

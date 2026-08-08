@@ -1,10 +1,13 @@
 {
   "$comment": "Model presets for oh-my-freebuff. Each preset maps an agent TIER to an OpenRouter model id. `omf preset <name>` rewrites the model: field of every installed agent according to its tier in agents.manifest.json. All ids are valid OpenRouter models (https://openrouter.ai/models); edit freely.",
+  "$maintenance": "Model ids drift as the ecosystem moves. Re-check these against https://openrouter.ai/models and bump lastReviewed when you do. 'premium' especially tracks the current frontier and should be revisited roughly quarterly.",
+  "lastReviewed": "2026-08",
   "defaultPreset": "balanced",
   "tiers": ["fast", "coding", "strong", "reasoning", "panel-a", "panel-b", "panel-c"],
   "presets": {
     "budget": {
       "description": "Cheapest. Open models only. Good for high-volume, low-stakes work.",
+      "costClass": "low",
       "fast": "z-ai/glm-4.7-flash",
       "coding": "qwen/qwen3-coder-flash",
       "strong": "z-ai/glm-4.6",
@@ -15,6 +18,7 @@
     },
     "balanced": {
       "description": "Default. Strong open models; good quality per dollar.",
+      "costClass": "medium",
       "fast": "deepseek/deepseek-chat-v3-0324",
       "coding": "qwen/qwen3-coder-plus",
       "strong": "z-ai/glm-4.7",
@@ -25,6 +29,7 @@
     },
     "premium": {
       "description": "Best quality, highest cost. Frontier models for the heavy tiers.",
+      "costClass": "high",
       "fast": "google/gemini-2.5-flash",
       "coding": "anthropic/claude-sonnet-4.5",
       "strong": "anthropic/claude-sonnet-4.5",

@@ -107,3 +107,45 @@ test('config output redacts secrets by default and reveals with --show-secrets',
   const shown = omf(['config', '--show-secrets'])
   assert.match(shown.stdout, /hooks\.slack\.com/)
 })
+
+test('config get on a secret key is redacted unless --show-secrets', () => {
+  omf(['install'])
+  omf(['notify', 'setup', 'telegram', 'BOT-TOKEN-123', '99999'])
+  const got = omf(['config', 'get', 'notifications.telegram.token'])
+  assert.doesNotMatch(got.stdout, /BOT-TOKEN-123/)
+  assert.match(got.stdout, /redacted/)
+  // non-secret sibling is still readable
+  assert.match(omf(['config', 'get', 'notifications.telegram.chatId']).stdout, /99999/)
+  // and the real value is available on demand
+  assert.match(omf(['config', 'get', 'notifications.telegram.token', '--show-secrets']).stdout, /BOT-TOKEN-123/)
+})
+
+test('uninstall does NOT delete a user-owned skill with a shipped name', () => {
+  // user has their own verify-before-done BEFORE installing
+  const userSkill = path.join(dir, '.agents', 'skills', 'verify-before-done', 'SKILL.md')
+  fs.mkdirSync(path.dirname(userSkill), { recursive: true })
+  fs.writeFileSync(userSkill, '---\nname: verify-before-done\n---\nMINE\n')
+
+  omf(['install']) // must not clobber it
+  assert.match(fs.readFileSync(userSkill, 'utf8'), /MINE/)
+
+  omf(['uninstall']) // must not delete it
+  assert.ok(fs.existsSync(userSkill), 'user-owned skill must survive uninstall')
+  assert.match(fs.readFileSync(userSkill, 'utf8'), /MINE/)
+})
+
+test('update does NOT overwrite a shipped skill the user modified', () => {
+  omf(['install'])
+  const skill = path.join(dir, '.agents', 'skills', 'verify-before-done', 'SKILL.md')
+  fs.writeFileSync(skill, '---\nname: verify-before-done\n---\nEDITED BY USER\n')
+  omf(['update'])
+  assert.match(fs.readFileSync(skill, 'utf8'), /EDITED BY USER/)
+})
+
+test('uninstall removes an unmodified shipped skill it installed', () => {
+  omf(['install'])
+  const skillDir = path.join(dir, '.agents', 'skills', 'verify-before-done')
+  assert.ok(fs.existsSync(skillDir))
+  omf(['uninstall'])
+  assert.ok(!fs.existsSync(skillDir), 'unmodified shipped skill should be removed')
+})

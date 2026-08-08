@@ -1,6 +1,6 @@
 {
   "name": "oh-my-freebuff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Teams-first multi-agent orchestration pack for Freebuff / Codebuff. Curated agents, orchestrators and smart model routing you drop into any project's .agents folder.",
   "keywords": [
     "freebuff",
@@ -36,13 +36,14 @@
     "omf": "node bin/omf.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mjs",
+    "smoke": "node --test test/smoke-codebuff.mjs",
     "prepublishOnly": "npm run typecheck && npm test"
   },
   "publishConfig": {
     "access": "public"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "repository": {
     "type": "git",

@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import {
   c, paint, readPackVersion, which, resolveContext, PACK_NAME, readJsonc,
   readJsoncSafe, loadConfig, setConfigValue, getConfigValue, redactConfig,
-  sendNotification, skillDirFor, normalizeSkillName, isGitIgnored, USER_CONFIG,
+  isSecretKeyPath, REDACTED, sendNotification, skillDirFor, isGitIgnored,
+  USER_CONFIG, readReceipt, writeReceipt, removeReceipt, sha256,
 } from './lib.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -97,19 +98,34 @@ function cmdInstall(ctx, opts) {
   }
 
   // Skills go to the shared .agents/skills/<name>/SKILL.md that Codebuff reads.
-  // Don't overwrite a same-named skill the user already has unless --force.
+  // Ownership is tracked in a receipt: we only refresh a skill we installed and
+  // that the user hasn't since modified. A user's own skill (or a modified copy
+  // of ours) is never overwritten — not even with --force.
+  const receipt = readReceipt(ctx)
   let skillsAdded = 0
+  let skillsUpdated = 0
   let skillsKept = 0
   for (const name of shippedSkillNames()) {
     const destDir = path.join(ctx.skillsDir, name)
-    if (fs.existsSync(destDir) && !opts.force) {
-      skillsKept++
-      continue
+    const destFile = path.join(destDir, 'SKILL.md')
+    const src = path.join(PACK_ROOT, 'skills', name, 'SKILL.md')
+    if (fs.existsSync(destFile)) {
+      const ours = receipt.skills[name] && receipt.skills[name] === sha256(destFile)
+      if (ours) {
+        fs.copyFileSync(src, destFile)
+        receipt.skills[name] = sha256(destFile)
+        skillsUpdated++
+      } else {
+        skillsKept++ // user-owned or user-modified — leave it alone
+      }
+    } else {
+      fs.mkdirSync(destDir, { recursive: true })
+      fs.copyFileSync(src, destFile)
+      receipt.skills[name] = sha256(destFile)
+      skillsAdded++
     }
-    fs.mkdirSync(destDir, { recursive: true })
-    fs.copyFileSync(path.join(PACK_ROOT, 'skills', name, 'SKILL.md'), path.join(destDir, 'SKILL.md'))
-    skillsAdded++
   }
+  writeReceipt(ctx, receipt)
 
   const preset = getConfigValue(ctx, 'modelPreset')
   if (preset && preset !== 'balanced') applyPreset(ctx, preset, true)
@@ -117,7 +133,7 @@ function cmdInstall(ctx, opts) {
   log(paint(c.green, `✓ Installed ${PACK_NAME} v${version()}`))
   log(`  ${paint(c.dim, 'agents:')}   ${listPackAgents().length}  → ${ctx.packDir}`)
   log(`  ${paint(c.dim, 'types:')}    ${typesNote}`)
-  log(`  ${paint(c.dim, 'skills:')}   ${skillsAdded} added${skillsKept ? `, ${skillsKept} kept` : ''}  → ${ctx.skillsDir}`)
+  log(`  ${paint(c.dim, 'skills:')}   ${skillsAdded} added${skillsUpdated ? `, ${skillsUpdated} updated` : ''}${skillsKept ? `, ${skillsKept} kept (yours)` : ''}  → ${ctx.skillsDir}`)
   if (preset) log(`  ${paint(c.dim, 'preset:')}   ${preset}`)
   log('')
   log('Next: run Freebuff in this project and pick an orchestrator, e.g.')
@@ -130,16 +146,27 @@ function cmdUninstall(ctx) {
     return
   }
   fs.rmSync(ctx.packDir, { recursive: true, force: true })
+
+  // Only remove skills we installed AND that are still byte-identical to what we
+  // wrote. Anything the user created or edited is left untouched.
+  const receipt = readReceipt(ctx)
   let removedSkills = 0
-  for (const name of shippedSkillNames()) {
-    const d = path.join(ctx.skillsDir, name)
-    if (fs.existsSync(d)) {
-      fs.rmSync(d, { recursive: true, force: true })
+  let keptSkills = 0
+  for (const [name, hash] of Object.entries(receipt.skills || {})) {
+    const destFile = path.join(ctx.skillsDir, name, 'SKILL.md')
+    if (!fs.existsSync(destFile)) continue
+    if (hash === sha256(destFile)) {
+      fs.rmSync(path.join(ctx.skillsDir, name), { recursive: true, force: true })
       removedSkills++
+    } else {
+      keptSkills++ // modified since install → not ours to delete
     }
   }
+  removeReceipt(ctx)
+
   log(paint(c.green, `✓ Removed ${ctx.packDir}`))
-  if (removedSkills) log(paint(c.dim, `  removed ${removedSkills} shipped skill(s) from ${ctx.skillsDir}`))
+  if (removedSkills) log(paint(c.dim, `  removed ${removedSkills} unmodified shipped skill(s)`))
+  if (keptSkills) log(paint(c.yellow, `  kept ${keptSkills} skill(s) you modified since install`))
   log(paint(c.dim, '  Left .agents/types in place (shared with Codebuff and other agents).'))
 }
 
@@ -230,7 +257,10 @@ function cmdConfig(ctx, opts) {
     log(paint(c.green, `✓ Set ${key}`) + paint(c.dim, ` in ${file}`))
   } else if (sub === 'get') {
     const v = key ? getConfigValue(ctx, key) : loadConfig(ctx)
-    const shown = opts.showSecrets ? v : redactConfig(v)
+    let shown
+    if (opts.showSecrets) shown = key ? v : stripSources(v)
+    else if (key) shown = isSecretKeyPath(key) ? REDACTED : redactConfig(v)
+    else shown = redactConfig(v)
     log(typeof shown === 'object' ? JSON.stringify(shown, null, 2) : String(shown))
   } else {
     const cfg = loadConfig(ctx)

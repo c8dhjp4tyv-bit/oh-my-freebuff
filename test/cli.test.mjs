@@ -7,8 +7,9 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   parseJsonc, resolveContext, setConfigValue, getConfigValue, loadConfig,
-  redactConfig, renderTemplate, resolveSecret, normalizeSkillName, skillDirFor,
-  sendNotification,
+  redactConfig, isSecretKeyPath, renderTemplate, resolveSecret, normalizeSkillName,
+  skillDirFor, sendNotification, readJsoncForWrite, readReceipt, writeReceipt,
+  removeReceipt, sha256,
 } from '../bin/lib.mjs'
 
 let tmp
@@ -67,10 +68,64 @@ test('redactConfig masks secret-looking keys, keeps the rest', () => {
 
 test('normalizeSkillName sluggifies and rejects traversal', () => {
   assert.equal(normalizeSkillName('My Cool Skill'), 'my-cool-skill')
-  assert.equal(normalizeSkillName('verify_before/done'.replace('/', '-')), 'verify-before-done')
   for (const bad of ['../etc', 'a/b', 'a\\b', '..', '.', '   ', '/', 'foo/../bar']) {
     assert.throws(() => normalizeSkillName(bad), /invalid|empty/, `should reject ${JSON.stringify(bad)}`)
   }
+})
+
+test('normalizeSkillName matches Codebuff rules (no consecutive hyphens, <=64)', () => {
+  assert.equal(normalizeSkillName('foo--bar'), 'foo-bar') // collapse consecutive
+  assert.equal(normalizeSkillName('--Lead__Ing--'), 'lead-ing') // trim + collapse
+  assert.throws(() => normalizeSkillName('a'.repeat(65)), /64/)
+  // result always satisfies the strict pattern
+  assert.match(normalizeSkillName('Weird   Name!!!'), /^[a-z0-9]+(-[a-z0-9]+)*$/)
+})
+
+test('isSecretKeyPath flags any secret-looking segment', () => {
+  assert.equal(isSecretKeyPath('notifications.telegram.token'), true)
+  assert.equal(isSecretKeyPath('notifications.slack.webhook'), true)
+  assert.equal(isSecretKeyPath('modelPreset'), false)
+  assert.equal(isSecretKeyPath('notifications.telegram.chatId'), false)
+})
+
+test('readJsoncForWrite: missing file is {}, malformed throws', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-jsonc-'))
+  assert.deepEqual(readJsoncForWrite(path.join(dir, 'nope.jsonc')), {})
+  const bad = path.join(dir, 'bad.jsonc')
+  fs.writeFileSync(bad, '{ "a": 1, broken')
+  assert.throws(() => readJsoncForWrite(bad), /not valid JSONC|Refusing/)
+})
+
+test('setConfigValue aborts on a malformed existing config (no data loss)', () => {
+  const ctx = resolveContext({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'omf-badcfg-')) })
+  fs.mkdirSync(ctx.configDir, { recursive: true })
+  fs.writeFileSync(ctx.configFile, '{ "modelPreset": "balanced" oops }')
+  const before = fs.readFileSync(ctx.configFile, 'utf8')
+  assert.throws(() => setConfigValue(ctx, 'foo', 'bar'), /valid JSONC|Refusing/)
+  assert.equal(fs.readFileSync(ctx.configFile, 'utf8'), before, 'file must be untouched')
+})
+
+test('setConfigValue rejects prototype-polluting keys', () => {
+  const ctx = resolveContext({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'omf-proto-')) })
+  for (const bad of ['__proto__.x', 'a.constructor', 'prototype']) {
+    assert.throws(() => setConfigValue(ctx, bad, 'y'), /forbidden/)
+  }
+  assert.equal({}.polluted, undefined)
+})
+
+test('receipt roundtrips and sha256 detects modification', () => {
+  const ctx = resolveContext({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'omf-receipt-')) })
+  assert.deepEqual(readReceipt(ctx).skills, {})
+  const f = path.join(ctx.configDir, 'sample.txt')
+  fs.mkdirSync(ctx.configDir, { recursive: true })
+  fs.writeFileSync(f, 'hello')
+  const h = sha256(f)
+  writeReceipt(ctx, { skills: { sample: h } })
+  assert.equal(readReceipt(ctx).skills.sample, h)
+  fs.writeFileSync(f, 'changed')
+  assert.notEqual(sha256(f), h)
+  removeReceipt(ctx)
+  assert.deepEqual(readReceipt(ctx).skills, {})
 })
 
 test('skillDirFor keeps the resolved path inside the skills root', () => {

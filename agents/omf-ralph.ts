@@ -52,28 +52,30 @@ const omfRalph: AgentDefinition = {
   outputMode: 'last_message',
   // Deterministic loop: when a verifyCommand is provided, the harness — not the
   // model — enforces "don't stop on a red check". Each time the agent tries to
-  // finish, we run the command ourselves and only let it end if the command
-  // shows no failure, up to a hard iteration cap. Without a verifyCommand it
-  // behaves as a normal prompt-driven agent (step until it ends its turn).
+  // finish, we re-run the command ourselves and read its REAL exit status via an
+  // appended sentinel (not by pattern-matching the human-readable output, which
+  // is why "0 failures" no longer trips a false negative). We stop only on a
+  // genuine exit 0, up to a hard iteration cap. With no verifyCommand it behaves
+  // as a normal prompt-driven agent (step until it ends its turn).
   handleSteps: function* ({ params }) {
-    const cmd = typeof params?.verifyCommand === 'string' ? params.verifyCommand : ''
-    const max = Number.isFinite(params?.maxIterations) ? Number(params?.maxIterations) : 8
+    const cmd = typeof params?.verifyCommand === 'string' ? params.verifyCommand.trim() : ''
+    let max = Number(params?.maxIterations)
+    if (!Number.isInteger(max) || max < 1) max = 8
+    const wrapped = cmd ? `${cmd}; echo "OMF_VERIFY_EXIT=$?"` : ''
     let verifications = 0
     while (true) {
       const { stepsComplete } = yield 'STEP'
       if (!stepsComplete) continue
-      if (!cmd) return // no command to enforce — respect the model's end_turn
+      if (!wrapped) return // nothing to enforce — respect the model's end_turn
       if (verifications >= max) return // safety cap; the prompt reports the blocker
       verifications++
       const { toolResult } = yield {
         toolName: 'run_terminal_command',
-        input: { command: cmd },
+        input: { command: wrapped },
       }
-      const out = JSON.stringify(toolResult ?? '')
-      // Bias toward "not done": only stop when we see a clear pass and no failure
-      // marker. Anything ambiguous keeps the loop going (bounded by max).
-      const failed = /(exit[ _]?code"?:?\s*[1-9])|\bfail(ed|ing|ures?)?\b|\berror\b|\bnot ok\b/i.test(out)
-      if (!failed) return
+      const m = JSON.stringify(toolResult ?? '').match(/OMF_VERIFY_EXIT=(\d+)/)
+      if (m && m[1] === '0') return // real exit 0 → genuinely done
+      // nonzero, or no sentinel (command didn't complete) → keep going (bounded)
     }
   },
   instructionsPrompt: `You are a persistent verification loop. You are done ONLY when a specific check command exits successfully — never before.

@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 
 // ---- colors -----------------------------------------------------------------
@@ -27,11 +28,34 @@ export function readJsonc(file) {
   return parseJsonc(fs.readFileSync(file, 'utf8'))
 }
 
+/** Lenient read for display paths: any error (missing, malformed) → fallback. */
 export function readJsoncSafe(file, fallback = {}) {
   try {
     return readJsonc(file)
   } catch {
     return fallback
+  }
+}
+
+/**
+ * Strict read for WRITE paths: a missing file is fine (returns {}), but a
+ * malformed or unreadable file throws so we never silently overwrite a config
+ * the user meant to keep.
+ */
+export function readJsoncForWrite(file) {
+  let text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return {}
+    throw new Error(`cannot read ${file}: ${e.message}`)
+  }
+  try {
+    return parseJsonc(text)
+  } catch (e) {
+    throw new Error(
+      `${file} is not valid JSONC (${e.message}). Refusing to overwrite it — fix or remove the file first.`,
+    )
   }
 }
 
@@ -82,24 +106,43 @@ export function loadConfig(ctx) {
   return { ...user, ...project, _sources: { user: USER_CONFIG, project: ctx.configFile } }
 }
 
-/** Set a dotted key in the context's config file. Secrets get 0600. */
+const FORBIDDEN_KEY = new Set(['__proto__', 'prototype', 'constructor'])
+
+/**
+ * Set a dotted key in the context's config file.
+ * - Aborts if the existing file is malformed (no silent data loss).
+ * - Rejects prototype-polluting key segments.
+ * - Writes atomically with 0600 permissions.
+ */
 export function setConfigValue(ctx, dottedKey, value) {
-  fs.mkdirSync(ctx.configDir, { recursive: true })
-  const cfg = readJsoncSafe(ctx.configFile, {})
   const parts = dottedKey.split('.')
+  for (const p of parts) {
+    if (!p) throw new Error(`invalid config key "${dottedKey}"`)
+    if (FORBIDDEN_KEY.has(p)) throw new Error(`refusing forbidden key segment "${p}"`)
+  }
+  fs.mkdirSync(ctx.configDir, { recursive: true })
+  const cfg = readJsoncForWrite(ctx.configFile) // throws on malformed existing file
   let node = cfg
   for (let i = 0; i < parts.length - 1; i++) {
     if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {}
     node = node[parts[i]]
   }
   node[parts[parts.length - 1]] = coerce(value)
-  fs.writeFileSync(ctx.configFile, JSON.stringify(cfg, null, 2) + '\n')
-  try {
-    fs.chmodSync(ctx.configFile, 0o600) // config can hold tokens/webhooks
-  } catch {
-    /* best effort; no-op on platforms without POSIX modes */
-  }
+  writeFileAtomic600(ctx.configFile, JSON.stringify(cfg, null, 2) + '\n')
   return ctx.configFile
+}
+
+/** Write via temp file + rename, creating the file 0600 so secrets are never
+ * world-readable, not even momentarily. */
+export function writeFileAtomic600(file, contents) {
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+  fs.writeFileSync(tmp, contents, { mode: 0o600 })
+  try {
+    fs.chmodSync(tmp, 0o600)
+  } catch {
+    /* platforms without POSIX modes */
+  }
+  fs.renameSync(tmp, file)
 }
 
 export function getConfigValue(ctx, dottedKey) {
@@ -116,6 +159,12 @@ function coerce(v) {
 }
 
 const SECRET_KEY = /token|secret|webhook|password|passwd|api[_-]?key|(^|_)key$/i
+export const REDACTED = '***redacted***'
+
+/** True if any segment of a dotted key path looks like a secret. */
+export function isSecretKeyPath(dottedKey) {
+  return String(dottedKey).split('.').some((seg) => SECRET_KEY.test(seg))
+}
 
 /** Deep copy of a config object with secret-looking values masked. */
 export function redactConfig(obj) {
@@ -124,19 +173,51 @@ export function redactConfig(obj) {
     const out = {}
     for (const [k, v] of Object.entries(obj)) {
       if (k === '_sources') continue
-      out[k] = SECRET_KEY.test(k) && typeof v === 'string' ? '***redacted***' : redactConfig(v)
+      out[k] = SECRET_KEY.test(k) && typeof v === 'string' ? REDACTED : redactConfig(v)
     }
     return out
   }
   return obj
 }
 
+// ---- managed-file receipt (ownership) --------------------------------------
+// Tracks what the installer created so update/uninstall never touch a file the
+// user owns or has modified since install.
+
+export const RECEIPT_NAME = 'omf-managed.json'
+const receiptPath = (ctx) => path.join(ctx.configDir, RECEIPT_NAME)
+
+export function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+export function readReceipt(ctx) {
+  const r = readJsoncSafe(receiptPath(ctx), null)
+  if (r && typeof r === 'object') return { skills: {}, ...r }
+  return { skills: {} }
+}
+
+export function writeReceipt(ctx, receipt) {
+  fs.mkdirSync(ctx.configDir, { recursive: true })
+  fs.writeFileSync(receiptPath(ctx), JSON.stringify({ version: 1, ...receipt }, null, 2) + '\n')
+}
+
+export function removeReceipt(ctx) {
+  try {
+    fs.unlinkSync(receiptPath(ctx))
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+}
+
 // ---- skill names (path-traversal safe) --------------------------------------
 
 /**
- * Validate and normalize a skill name into a safe single-segment slug.
- * Rejects anything with path separators, `..`, or that empties out. This is the
- * one gate every skill-mutating command must pass user input through.
+ * Validate and normalize a skill name into a safe slug that also satisfies
+ * Codebuff's own rule (1-64 chars, lowercase alphanumeric segments joined by
+ * single hyphens, no leading/trailing/consecutive hyphens). This is the one gate
+ * every skill-mutating command passes user input through — so a name the CLI
+ * accepts is a name Codebuff will accept.
  */
 export function normalizeSkillName(raw) {
   const input = String(raw ?? '').trim()
@@ -144,8 +225,14 @@ export function normalizeSkillName(raw) {
   if (/[\\/]/.test(input) || input.includes('..')) {
     throw new Error(`invalid skill name "${raw}" (no slashes or "..")`)
   }
-  const slug = input.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
-  if (!slug || slug === '.' || slug === '..') throw new Error(`invalid skill name "${raw}"`)
+  const slug = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // non-alphanumeric → hyphen
+    .replace(/-+/g, '-') // collapse consecutive hyphens
+    .replace(/^-+|-+$/g, '') // trim hyphens
+  if (!slug) throw new Error(`invalid skill name "${raw}" (nothing usable after normalizing)`)
+  if (slug.length > 64) throw new Error(`invalid skill name "${raw}" (max 64 characters)`)
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) throw new Error(`invalid skill name "${raw}"`)
   return slug
 }
 
@@ -223,17 +310,24 @@ export async function sendNotification(message, ctx, vars = {}) {
   return results
 }
 
-async function post(channel, url, body) {
+async function post(channel, url, body, timeoutMs = 10000) {
   try {
     if (typeof fetch !== 'function') return { channel, ok: false, detail: 'fetch unavailable (need Node >= 18)' }
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    return { channel, ok: res.ok, detail: `HTTP ${res.status}` }
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      })
+      return { channel, ok: res.ok, detail: `HTTP ${res.status}` }
+    } finally {
+      clearTimeout(t)
+    }
   } catch (e) {
-    return { channel, ok: false, detail: e.message }
+    return { channel, ok: false, detail: e.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : e.message }
   }
 }
 

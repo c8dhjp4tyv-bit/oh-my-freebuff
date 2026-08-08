@@ -45,7 +45,7 @@ Stages (each is one spawned agent; feed its full output into the next):
 1. research  → 'researcher': gather context. GATE: the relevant files and constraints are identified.
 2. design    → 'architect': choose the approach. GATE: a concrete file-by-file plan exists.
 3. plan      → 'planner': ordered todo list. GATE: every step has a done-condition. Record with write_todos.
-4. implement → 'implementer': execute the plan (one focused pass, in order). GATE: the intended changes are made.
+4. implement → for EACH task in the plan, in order, spawn a FRESH 'implementer' with just that single task and its definition of done. Wait for it, check its result (a per-task gate), then spawn the next. Never hand the whole plan to one implementer — that breaks its one-task contract and produces sprawling diffs. GATE (per task): the task's done-condition holds before moving on.
 5. test      → 'tester': add/run tests. GATE: tests pass.
 6. review    → 'reviewer': final check. GATE: no unresolved must-fix findings (loop back to stage 4 if any).
 
