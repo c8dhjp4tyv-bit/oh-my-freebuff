@@ -51,12 +51,15 @@ const omfRalph: AgentDefinition = {
   },
   outputMode: 'last_message',
   // Deterministic loop: when a verifyCommand is provided, the harness — not the
-  // model — enforces "don't stop on a red check". Each time the agent tries to
-  // finish, we re-run the command ourselves and read its REAL exit status via an
-  // appended sentinel (not by pattern-matching the human-readable output, which
-  // is why "0 failures" no longer trips a false negative). We stop only on a
-  // genuine exit 0, up to a hard iteration cap. With no verifyCommand it behaves
-  // as a normal prompt-driven agent (step until it ends its turn).
+  // model — enforces "don't stop on a red check". EVERY time the agent tries to
+  // finish we re-run the command and read its REAL exit status via an appended
+  // sentinel (not by pattern-matching output, which is why "0 failures" no longer
+  // trips a false negative). Two distinct exits, never shared:
+  //   • the command exits 0 → success, end the turn.
+  //   • the command still fails after maxIterations → record an explicit failure
+  //     via set_output and end the turn — so an exhausted loop is never mistaken
+  //     for green just because the model's last message claimed success.
+  // With no verifyCommand it behaves as a normal prompt-driven agent.
   handleSteps: function* ({ params }) {
     const cmd = typeof params?.verifyCommand === 'string' ? params.verifyCommand.trim() : ''
     let max = Number(params?.maxIterations)
@@ -67,15 +70,28 @@ const omfRalph: AgentDefinition = {
       const { stepsComplete } = yield 'STEP'
       if (!stepsComplete) continue
       if (!wrapped) return // nothing to enforce — respect the model's end_turn
-      if (verifications >= max) return // safety cap; the prompt reports the blocker
+      // A completion attempt ALWAYS gets verified before we let the turn end.
       verifications++
       const { toolResult } = yield {
         toolName: 'run_terminal_command',
         input: { command: wrapped },
       }
       const m = JSON.stringify(toolResult ?? '').match(/OMF_VERIFY_EXIT=(\d+)/)
-      if (m && m[1] === '0') return // real exit 0 → genuinely done
-      // nonzero, or no sentinel (command didn't complete) → keep going (bounded)
+      if (m && m[1] === '0') return // genuine exit 0 → success
+      if (verifications >= max) {
+        // Out of attempts and still red → fail loudly, don't fall through to green.
+        yield {
+          toolName: 'set_output',
+          input: {
+            output: {
+              status: 'failed',
+              reason: `verification command still failing after ${max} attempt(s): ${cmd}`,
+            },
+          },
+        }
+        return
+      }
+      // Still red, attempts remain → keep going; the model sees the failing output.
     }
   },
   instructionsPrompt: `You are a persistent verification loop. You are done ONLY when a specific check command exits successfully — never before.

@@ -92,8 +92,11 @@ test('--dir operates only on the target project, not the working directory', () 
 test('preset rewrites installed agents and records the choice in config', () => {
   omf(['install'])
   assert.equal(omf(['preset', 'premium']).status, 0)
+  // omf-team is a strong-tier agent; assert it took the premium 'strong' model
+  // (read from models.json so this test tracks the preset, not a hard-coded id).
+  const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))
   const team = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'omf-team.ts'), 'utf8')
-  assert.match(team, /model:\s*'anthropic\/claude-sonnet-4\.5'/)
+  assert.ok(team.includes(`model: '${models.presets.premium.strong}'`), `omf-team should use premium.strong (${models.presets.premium.strong})`)
   const cfg = JSON.parse(fs.readFileSync(path.join(dir, '.freebuff', 'omf.jsonc'), 'utf8'))
   assert.equal(cfg.modelPreset, 'premium')
 })

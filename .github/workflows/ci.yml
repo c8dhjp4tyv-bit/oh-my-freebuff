@@ -20,3 +20,18 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Real-runtime compatibility: load the installed pack through the actual
+  # Codebuff SDK. Runs against @codebuff/sdk@latest so we find out here — not in
+  # a user's terminal — if a Codebuff change breaks agent/skill discovery.
+  codebuff-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm i --no-save @codebuff/sdk@latest
+      - run: npm run smoke

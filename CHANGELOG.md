@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.3]
+
+Fourth review pass. Runtime-compat proven in CI; ralph failure semantics; preset refresh.
+
+### Fixed
+
+- **Verified real Codebuff runtime compatibility.** Running the pack through the
+  actual `@codebuff/sdk` loader surfaced that the smoke test read the wrong return
+  shape *and* two files broke the loader. All 26 agents now load with **zero
+  validation errors**, and:
+  - the installer no longer copies `hooks/` into `.agents/` (the loader tried to
+    parse the hook `.mjs` as an agent),
+  - the type shim dropped its runtime `export default` of a type (a dangling value
+    reference the loader hit).
+- **ralph never mistakes an exhausted loop for green.** Every completion attempt
+  is verified; success (exit 0) and "still failing after maxIterations" are now
+  separate exits, the latter recording an explicit `set_output` failure instead
+  of falling through.
+
+### Added
+
+- **The Codebuff SDK smoke test runs in CI** as its own `codebuff-compat` job
+  (`@codebuff/sdk@latest` → `npm run smoke`), so a Codebuff change that breaks
+  agent/skill discovery is caught here, not in a user's terminal.
+- **Model-id validity is enforced against the SDK's model list** — every id in
+  `models.json` must be one the installed SDK recognizes, so a stale/typo'd slug
+  fails CI.
+
+### Changed
+
+- `premium` preset's heavy tiers upgraded to `anthropic/claude-opus-4.6` (the
+  strongest model this SDK version validates); "frontier" wording softened with a
+  re-benchmark note.
+
 ## [0.2.2]
 
 Third review pass. Consistency, doctor depth, and durable model customization.

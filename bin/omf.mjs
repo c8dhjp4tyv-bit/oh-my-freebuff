@@ -88,8 +88,9 @@ function cmdInstall(ctx, opts) {
   for (const extra of ['agents.manifest.json', 'models.json']) {
     fs.copyFileSync(path.join(PACK_ROOT, extra), path.join(ctx.packDir, extra))
   }
-  const hooksSrc = path.join(PACK_ROOT, 'hooks')
-  if (fs.existsSync(hooksSrc)) copyDir(hooksSrc, path.join(ctx.packDir, 'hooks'))
+  // Note: we deliberately do NOT copy hooks/ into .agents — Codebuff's agent
+  // loader would try to parse the .mjs there as an agent. The notify hook ships
+  // in the npm package (hooks/notify.mjs) and is run from there.
 
   // Types are shared and Codebuff also generates them. Never clobber an existing
   // agent-definition.ts — only seed our shim when none is present.

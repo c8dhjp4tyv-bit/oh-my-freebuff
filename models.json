@@ -28,13 +28,13 @@
       "panel-c": "qwen/qwen3-coder-plus"
     },
     "premium": {
-      "description": "Best quality, highest cost. Frontier models for the heavy tiers.",
+      "description": "Highest-capability of the presets. Uses the strongest models this SDK version validates; re-benchmark as newer ones land.",
       "costClass": "high",
       "fast": "google/gemini-2.5-flash",
       "coding": "anthropic/claude-sonnet-4.5",
-      "strong": "anthropic/claude-sonnet-4.5",
-      "reasoning": "openai/gpt-5.1",
-      "panel-a": "anthropic/claude-sonnet-4.5",
+      "strong": "anthropic/claude-opus-4.6",
+      "reasoning": "anthropic/claude-opus-4.6",
+      "panel-a": "anthropic/claude-opus-4.6",
       "panel-b": "openai/gpt-5.1",
       "panel-c": "google/gemini-2.5-pro"
     }

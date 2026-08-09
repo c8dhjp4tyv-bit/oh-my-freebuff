@@ -35,17 +35,60 @@ function freshInstall() {
   return dir
 }
 
-test('Codebuff loadLocalAgents discovers the installed pack agents', skipIfNoSdk, async () => {
+test('Codebuff loadLocalAgents loads every pack agent with no validation errors', skipIfNoSdk, async () => {
   const dir = freshInstall()
   try {
-    const agents = await sdk.loadLocalAgents({ agentsPath: path.join(dir, '.agents', 'oh-my-freebuff'), validate: true })
+    // With validate:true the SDK returns { agents, validationErrors }.
+    const { agents, validationErrors } = await sdk.loadLocalAgents({
+      agentsPath: path.join(dir, '.agents', 'oh-my-freebuff'),
+      validate: true,
+    })
+    assert.deepEqual(validationErrors, [], `Codebuff reported validation errors: ${JSON.stringify(validationErrors)}`)
     const ids = new Set(Object.values(agents).map((a) => a.id))
-    for (const expected of ['omf-team', 'implementer', 'reviewer', 'omf-ralph']) {
-      assert.ok(ids.has(expected), `Codebuff should load agent "${expected}" (loaded: ${[...ids].join(', ')})`)
+    for (const expected of ['omf-team', 'implementer', 'reviewer', 'omf-ralph', 'advisor-a']) {
+      assert.ok(ids.has(expected), `Codebuff should load agent "${expected}" (loaded: ${[...ids].sort().join(', ')})`)
     }
+    assert.equal(ids.size, 26, `expected 26 agents, Codebuff loaded ${ids.size}`)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('installed pack dir has no non-agent files that break the loader', skipIfNoSdk, async () => {
+  const dir = freshInstall()
+  try {
+    // A clean load (validate:false) should surface no per-file load errors for
+    // the pack dir — i.e. we don't ship .mjs/hook/type files the loader chokes on.
+    const errs = []
+    const orig = console.error
+    console.error = (...a) => errs.push(a.join(' '))
+    try {
+      await sdk.loadLocalAgents({ agentsPath: path.join(dir, '.agents', 'oh-my-freebuff') })
+    } finally {
+      console.error = orig
+    }
+    const loadErrors = errs.filter((e) => /Error loading agent/i.test(e))
+    assert.deepEqual(loadErrors, [], `loader errors: ${loadErrors.join('\n')}`)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('every model id in models.json is one the SDK recognizes', skipIfNoSdk, async () => {
+  // ModelName in the SDK is `<enumerated literals> | (string & {})`, so the type
+  // accepts anything — but the enumerated literals are the models Codebuff/
+  // OpenRouter actually know. Extract them and assert our presets only use those,
+  // so a stale/typo'd slug fails CI here instead of at a user's terminal.
+  const dts = path.join(ROOT, 'node_modules', '@codebuff', 'sdk', 'dist', 'index.d.ts')
+  const known = new Set([...fs.readFileSync(dts, 'utf8').matchAll(/"([a-z0-9-]+\/[a-z0-9.:@-]+)"/g)].map((m) => m[1]))
+  assert.ok(known.size > 20, 'failed to parse SDK model list')
+  const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))
+  const used = new Set()
+  for (const preset of Object.values(models.presets)) {
+    for (const t of models.tiers) if (preset[t]) used.add(preset[t])
+  }
+  const unknown = [...used].filter((id) => !known.has(id))
+  assert.deepEqual(unknown, [], `models.json uses ids the SDK doesn't list: ${unknown.join(', ')}`)
 })
 
 test('Codebuff loadSkills discovers the installed skill', skipIfNoSdk, async () => {

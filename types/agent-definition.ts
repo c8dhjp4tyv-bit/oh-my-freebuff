@@ -123,4 +123,6 @@ export interface AgentDefinition {
 
 type Fn = (data: unknown, msg?: string, ...args: unknown[]) => unknown
 
-export default AgentDefinition
+// Note: no runtime default export. `AgentDefinition` is a type; agents import it
+// as `import type { AgentDefinition }`. A `export default AgentDefinition` would
+// be a dangling value reference if Codebuff's loader ever evaluates this file.
