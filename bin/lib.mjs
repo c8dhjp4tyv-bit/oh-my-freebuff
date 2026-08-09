@@ -312,7 +312,7 @@ export async function sendNotification(message, ctx, vars = {}) {
 
 async function post(channel, url, body, timeoutMs = 10000) {
   try {
-    if (typeof fetch !== 'function') return { channel, ok: false, detail: 'fetch unavailable (need Node >= 18)' }
+    if (typeof fetch !== 'function') return { channel, ok: false, detail: 'fetch unavailable (need Node >= 20)' }
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), timeoutMs)
     try {

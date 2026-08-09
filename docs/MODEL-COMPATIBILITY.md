@@ -45,15 +45,51 @@ according to its tier, and remembers the choice in `.freebuff/omf.jsonc` so
 The table is generated from `models.json`. `npm test` asserts the shipped agent
 defaults match the `balanced` column.
 
-## Per-agent overrides
+## Per-agent overrides and custom presets
 
-Presets are a convenience, not a cage. To pin one agent to a specific model,
-just edit its file after installing:
+Presets are a convenience, not a cage. Two config-driven ways to customize —
+both survive `omf install` / `omf update` / `omf preset` because they live in
+your config, not in the agent files:
 
+**Pin individual agents** with `modelOverrides` (agent id → model id). An
+override always wins over the preset's tier model:
+
+```jsonc
+// .freebuff/omf.jsonc
+{
+  "modelPreset": "balanced",
+  "modelOverrides": {
+    "architect": "anthropic/claude-opus-4.1",
+    "implementer": "qwen/qwen3-coder-plus"
+  }
+}
 ```
-.agents/oh-my-freebuff/<agent>.ts   →   model: 'any/openrouter-model-id',
+
+**Define your own preset** with `customPresets` (name → tier map), then apply it
+like any built-in:
+
+```jsonc
+{
+  "customPresets": {
+    "mine": {
+      "description": "my mix",
+      "fast": "google/gemini-2.5-flash-lite",
+      "coding": "qwen/qwen3-coder-plus",
+      "strong": "z-ai/glm-4.7",
+      "reasoning": "deepseek/deepseek-r1-0528",
+      "panel-a": "z-ai/glm-4.7",
+      "panel-b": "deepseek/deepseek-r1-0528",
+      "panel-c": "qwen/qwen3-coder-plus"
+    }
+  }
+}
 ```
 
-Note a later `omf preset` run will overwrite that line. For a permanent override,
-change the tier map in `agents.manifest.json` or the model in `models.json`
-instead.
+```bash
+omf preset mine     # applies your custom preset (+ any modelOverrides on top)
+```
+
+Editing an installed agent file's `model:` line directly also works but is
+overwritten by the next `omf preset` / `omf update` — use the config for
+anything you want to keep. `omf doctor` validates that your configured preset
+exists and that every agent still maps to a tier and a model.

@@ -41,7 +41,11 @@ function parseArgs(argv) {
     if (a === '--global' || a === '-g') opts.global = true
     else if (a === '--force' || a === '-f') opts.force = true
     else if (a === '--show-secrets') opts.showSecrets = true
-    else if (a === '--dir' || a === '-d') opts.dir = argv[++i]
+    else if (a === '--dir' || a === '-d') {
+      const val = argv[++i]
+      if (val === undefined || val.startsWith('-')) throw new Error('--dir requires a path')
+      opts.dir = val
+    }
     else if (a.startsWith('--dir=')) opts.dir = a.slice(6)
     else if (a === '--help' || a === '-h') opts.help = true
     else opts._.push(a)
@@ -127,8 +131,13 @@ function cmdInstall(ctx, opts) {
   }
   writeReceipt(ctx, receipt)
 
+  // Re-apply routing from config (preset + per-agent overrides) onto the fresh
+  // copy, but don't create/write config just because someone ran a bare install.
   const preset = getConfigValue(ctx, 'modelPreset')
-  if (preset && preset !== 'balanced') applyPreset(ctx, preset, true)
+  const overrides = getConfigValue(ctx, 'modelOverrides')
+  if ((preset && preset !== 'balanced') || (overrides && Object.keys(overrides).length)) {
+    applyPreset(ctx, preset || 'balanced', { quiet: true, writeConfig: false })
+  }
 
   log(paint(c.green, `✓ Installed ${PACK_NAME} v${version()}`))
   log(`  ${paint(c.dim, 'agents:')}   ${listPackAgents().length}  → ${ctx.packDir}`)
@@ -193,52 +202,68 @@ function cmdList() {
 
 // ---- model presets ----------------------------------------------------------
 
-function applyPreset(ctx, name, quiet = false) {
+/** Built-in presets merged with any customPresets from config. */
+function loadRouting(ctx) {
   const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
-  const preset = models.presets[name]
+  const custom = getConfigValue(ctx, 'customPresets') || {}
+  return { models, presets: { ...models.presets, ...custom } }
+}
+
+function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
+  const { models, presets } = loadRouting(ctx)
+  const preset = presets[name]
   if (!preset) {
     err(paint(c.red, `Unknown preset: ${name}`))
-    err(paint(c.dim, `Available: ${Object.keys(models.presets).join(', ')}`))
+    err(paint(c.dim, `Available: ${Object.keys(presets).join(', ')}`))
     process.exit(1)
   }
   requireInstalled(ctx)
   const manifest = readJsonc(path.join(PACK_ROOT, 'agents.manifest.json')).tiers
+  const overrides = getConfigValue(ctx, 'modelOverrides') || {}
 
   let changed = 0
+  let overridden = 0
   for (const file of fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))) {
     const filePath = path.join(ctx.packDir, file)
     const src = fs.readFileSync(filePath, 'utf8')
     const idMatch = src.match(/\bid:\s*'([^']+)'/)
     if (!idMatch) continue
-    const model = preset[manifest[idMatch[1]]]
+    const id = idMatch[1]
+    const usingOverride = Object.prototype.hasOwnProperty.call(overrides, id)
+    const model = usingOverride ? overrides[id] : preset[manifest[id]]
     if (!model) continue
     const next = src.replace(/^(\s*model:\s*)'[^']*'/m, `$1'${model}'`)
     if (next !== src) {
       fs.writeFileSync(filePath, next)
       changed++
+      if (usingOverride) overridden++
     }
   }
-  setConfigValue(ctx, 'modelPreset', name)
+  if (writeConfig) setConfigValue(ctx, 'modelPreset', name)
   if (!quiet) {
     log(paint(c.green, `✓ Applied '${name}' preset`) + paint(c.dim, ` (${preset.description || ''})`))
     log(`  ${paint(c.dim, 'updated:')} ${changed} agent files in ${ctx.packDir}`)
+    if (overridden) log(`  ${paint(c.dim, 'overrides:')} ${overridden} agent(s) pinned via modelOverrides`)
     for (const t of models.tiers) if (preset[t]) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
   }
 }
 
 function cmdPreset(ctx, opts) {
   const name = opts._[0]
-  const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
+  const { models, presets } = loadRouting(ctx)
   if (!name) {
     const current = getConfigValue(ctx, 'modelPreset') || models.defaultPreset
+    const builtin = new Set(Object.keys(models.presets))
     log(paint(c.bold, 'Model presets') + paint(c.dim, `  (current: ${current})`))
     log('')
-    for (const [k, v] of Object.entries(models.presets)) {
+    for (const [k, v] of Object.entries(presets)) {
       const mark = k === current ? paint(c.green, '●') : ' '
-      log(`  ${mark} ${paint(c.bold, k.padEnd(10))} ${paint(c.dim, v.description || '')}`)
+      const tag = builtin.has(k) ? '' : paint(c.dim, ' (custom)')
+      log(`  ${mark} ${paint(c.bold, k.padEnd(10))} ${paint(c.dim, v.description || '')}${tag}`)
     }
     log('')
     log(paint(c.dim, 'Apply with:  omf preset <name>'))
+    log(paint(c.dim, 'Define custom presets or per-agent pins in config: customPresets / modelOverrides'))
     return
   }
   applyPreset(ctx, name)
@@ -488,7 +513,7 @@ function cmdDoctor(ctx) {
 
   log(paint(c.bold, 'oh-my-freebuff doctor'))
   log('')
-  check('Node >= 18', Number(process.versions.node.split('.')[0]) >= 18, `found v${process.versions.node}`)
+  check('Node >= 20', Number(process.versions.node.split('.')[0]) >= 20, `found v${process.versions.node}`)
   const cli = which('freebuff') || which('codebuff') || which('cb')
   check('Freebuff or Codebuff CLI on PATH', !!cli, cli || 'npm i -g freebuff')
 
@@ -496,12 +521,34 @@ function cmdDoctor(ctx) {
   check('Pack installed', installed, installed ? ctx.packDir : `run: omf install${ctx.scope === 'global' ? ' --global' : ''}`)
   if (installed) {
     check('types/agent-definition present', fs.existsSync(ctx.typesFile), fs.existsSync(ctx.typesFile) ? '' : 'run: omf update')
-    check('agent files present', fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts')).length > 0, `${fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts')).length} agents`)
+    const agentFiles = fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))
+    check('agent files present', agentFiles.length > 0, `${agentFiles.length} agents`)
     const skills = fs.existsSync(ctx.skillsDir) ? fs.readdirSync(ctx.skillsDir).filter((n) => fs.existsSync(path.join(ctx.skillsDir, n, 'SKILL.md'))).length : 0
     check('skills discoverable (.agents/skills/*/SKILL.md)', skills > 0, `${skills} skill(s)`)
+
+    // Model-routing integrity: manifest ↔ agents, tiers mapped, models non-empty.
+    const manifest = readJsoncSafe(path.join(ctx.packDir, 'agents.manifest.json'), {}).tiers || {}
+    const ids = new Map()
+    let emptyModels = 0
+    for (const f of agentFiles) {
+      const src = fs.readFileSync(path.join(ctx.packDir, f), 'utf8')
+      const id = (src.match(/\bid:\s*'([^']+)'/) || [])[1]
+      const model = (src.match(/^\s*model:\s*'([^']*)'/m) || [])[1]
+      if (id) ids.set(id, f)
+      if (!model) emptyModels++
+    }
+    const noTier = [...ids.keys()].filter((id) => !manifest[id])
+    check('every agent has a manifest tier', noTier.length === 0, noTier.join(', '))
+    const orphanManifest = Object.keys(manifest).filter((id) => !ids.has(id))
+    check('no manifest entries without an agent', orphanManifest.length === 0, orphanManifest.join(', '))
+    check('every agent has a model id', emptyModels === 0, emptyModels ? `${emptyModels} missing` : '')
+
+    const preset = getConfigValue(ctx, 'modelPreset')
+    if (preset) {
+      const presetNames = new Set(Object.keys(loadRouting(ctx).presets))
+      check('model preset is defined', presetNames.has(preset), presetNames.has(preset) ? preset : `"${preset}" is not a known preset`)
+    }
   }
-  const preset = getConfigValue(ctx, 'modelPreset')
-  if (preset) check('model preset', true, preset)
 
   // Secret hygiene: if secrets live in the project config, it should be ignored.
   if (ctx.scope !== 'global' && fs.existsSync(ctx.configFile)) {

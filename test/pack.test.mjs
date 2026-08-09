@@ -59,6 +59,20 @@ test('CLI JS entrypoints are syntactically valid', () => {
   }
 })
 
+test('read-only review agents have no mutating tools', () => {
+  const cases = [
+    ['security-reviewer.ts', ['write_file', 'str_replace', 'run_terminal_command']],
+    ['critic.ts', ['write_file', 'str_replace', 'run_terminal_command']],
+    ['reviewer.ts', ['write_file', 'str_replace']], // reviewer keeps terminal for inspection only
+  ]
+  for (const [file, forbidden] of cases) {
+    const tools = arrayField(fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8'), 'toolNames') || []
+    for (const t of forbidden) {
+      assert.ok(!tools.includes(t), `${file} must not have the mutating tool "${t}"`)
+    }
+  }
+})
+
 test('specialists expose a spawnerPrompt for composability', () => {
   for (const file of files) {
     if (file.startsWith('omf-')) continue // orchestrators are user-invoked

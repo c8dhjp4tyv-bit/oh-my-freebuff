@@ -142,6 +142,41 @@ test('update does NOT overwrite a shipped skill the user modified', () => {
   assert.match(fs.readFileSync(skill, 'utf8'), /EDITED BY USER/)
 })
 
+test('--dir with no path fails fast instead of using the cwd', () => {
+  const res = omf(['install', '--dir'])
+  assert.notEqual(res.status, 0)
+  assert.match(res.stderr, /--dir requires a path/)
+})
+
+test('modelOverrides pin an agent and survive update', () => {
+  omf(['install'])
+  omf(['config', 'set', 'modelOverrides.implementer', 'test/pinned-model'])
+  omf(['update'])
+  const impl = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'implementer.ts'), 'utf8')
+  assert.match(impl, /model:\s*'test\/pinned-model'/)
+})
+
+test('customPresets can be applied by name', () => {
+  omf(['install'])
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ customPresets: { mine: { description: 'x', strong: 'test/strong-x' } } }, null, 2),
+  )
+  const res = omf(['preset', 'mine'])
+  assert.equal(res.status, 0, res.stderr)
+  const team = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'omf-team.ts'), 'utf8')
+  assert.match(team, /model:\s*'test\/strong-x'/) // omf-team is a strong-tier agent
+})
+
+test('doctor flags an unknown configured preset', () => {
+  omf(['install'])
+  omf(['config', 'set', 'modelPreset', 'patates'])
+  const d = omf(['doctor'])
+  assert.match(d.stdout, /not a known preset/)
+})
+
 test('uninstall removes an unmodified shipped skill it installed', () => {
   omf(['install'])
   const skillDir = path.join(dir, '.agents', 'skills', 'verify-before-done')

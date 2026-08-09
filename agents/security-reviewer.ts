@@ -12,13 +12,14 @@ const securityReviewer: AgentDefinition = {
   displayName: 'OMF Security Reviewer',
   model: 'z-ai/glm-4.7',
   reasoningOptions: { enabled: true, effort: 'high' },
+  // Intentionally no run_terminal_command: this is a static audit. Keeping it
+  // read-only removes any path to mutating the repo during a security review.
   toolNames: [
     'read_files',
     'code_search',
     'find_files',
     'glob',
     'list_directory',
-    'run_terminal_command',
     'think_deeply',
     'set_output',
   ],

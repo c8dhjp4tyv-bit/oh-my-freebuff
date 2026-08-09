@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.2]
+
+Third review pass. Consistency, doctor depth, and durable model customization.
+
+### Fixed
+
+- **Node version is consistent at `>=20`** across `package.json`, the README, and
+  `omf doctor` (previously the README and doctor still said 18).
+- **`--dir` with no path fails fast** ("--dir requires a path") instead of
+  silently falling back to the current directory.
+- **`package-lock.json` tracks the current version.**
+
+### Added
+
+- **Durable model customization via config**, honored by `install`/`update`/`preset`:
+  - `modelOverrides` — pin individual agents (agent id → model id); an override
+    beats the preset's tier model.
+  - `customPresets` — define your own named tier→model preset and `omf preset <name>` it.
+  Editing installed agent files still works but is overwritten by the next
+  `preset`/`update`; config-based customization persists.
+- **`omf doctor` validates model routing**: the configured preset actually
+  exists, every agent maps to a manifest tier, no orphan manifest entries, and
+  every agent has a model id — so a typo'd preset no longer reports green.
+
+### Changed
+
+- **`security-reviewer` is now genuinely read-only** (no `run_terminal_command`);
+  it audits by reading. `reviewer` keeps terminal access but is documented and
+  instructed as non-editing / read-only-inspection (git diff, tests) — never
+  mutating the repo.
+
 ## [0.2.1]
 
 Second review pass. Closes the safe install/update/uninstall gaps.

@@ -199,8 +199,10 @@ After install:
 
 ## Customize
 
-- Change a model: edit the `model:` line in an agent file (a later `omf preset`
-  overwrites it — to make it stick, edit `agents.manifest.json` or `models.json`).
+- Change a model durably: set `modelOverrides` (per agent) or `customPresets` in
+  `.freebuff/omf.jsonc` — these survive `install`/`update`/`preset`. See
+  [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md). Editing an agent
+  file's `model:` line works too but is overwritten by the next `omf preset`.
 - Change behavior: edit the agent's `instructionsPrompt`.
 - Add an agent: drop a `.ts` file that exports an `AgentDefinition` and add its
   id to an orchestrator's `spawnableAgents`.
@@ -213,7 +215,7 @@ After install:
 
 ## Requirements
 
-- Node.js ≥ 18 for the `omf` CLI.
+- Node.js ≥ 20 for the `omf` CLI.
 - The Freebuff or Codebuff CLI to run the agents (`npm i -g freebuff`).
 
 ## Develop
