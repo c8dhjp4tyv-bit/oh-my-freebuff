@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.4]
+
+Release/showcase polish — no code behavior change.
+
+### Added
+
+- README status badges (CI, npm version, Node, license).
+- Community-health files: `CONTRIBUTING.md`, `SECURITY.md`, GitHub issue
+  templates (bug / feature) and a pull-request template.
+
 ## [0.2.3]
 
 Fourth review pass. Runtime-compat proven in CI; ralph failure semantics; preset refresh.

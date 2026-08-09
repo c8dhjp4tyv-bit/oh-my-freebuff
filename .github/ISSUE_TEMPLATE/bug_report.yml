@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in the CLI or an agent doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, and what went wrong?
+      placeholder: Ran `omf ...`, expected X, got Y.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. omf install
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `omf doctor`
+      render: shell
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: oh-my-freebuff version, Node version, OS, and Freebuff/Codebuff CLI version if relevant.
+      placeholder: "omf 0.2.x, Node 22, macOS 15, freebuff 0.0.x"
+    validations:
+      required: true

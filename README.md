@@ -1,5 +1,10 @@
 # oh-my-freebuff
 
+[![CI](https://github.com/c8dhjp4tyv-bit/oh-my-freebuff/actions/workflows/ci.yml/badge.svg)](https://github.com/c8dhjp4tyv-bit/oh-my-freebuff/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/oh-my-freebuff)](https://www.npmjs.com/package/oh-my-freebuff)
+[![node](https://img.shields.io/node/v/oh-my-freebuff)](https://nodejs.org)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 Multi-agent orchestration for [Freebuff](https://freebuff.com) and
 [Codebuff](https://codebuff.com). It's a pack of agents you drop into a project's
 `.agents` folder: a set of specialists (researcher, implementer, reviewer, and so
