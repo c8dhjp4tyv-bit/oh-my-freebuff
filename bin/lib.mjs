@@ -28,12 +28,32 @@ export function readJsonc(file) {
   return parseJsonc(fs.readFileSync(file, 'utf8'))
 }
 
-/** Lenient read for display paths: any error (missing, malformed) → fallback. */
+/** Lenient read for non-user-owned metadata: any error → fallback. */
 export function readJsoncSafe(file, fallback = {}) {
   try {
     return readJsonc(file)
   } catch {
     return fallback
+  }
+}
+
+/**
+ * Strict optional read for user-owned config. A missing file is fine, but an
+ * unreadable or malformed file is an error: silently replacing it with `{}` can
+ * make commands run with settings the user did not intend.
+ */
+export function readJsoncOptionalStrict(file) {
+  let text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return {}
+    throw new Error(`cannot read ${file}: ${e.message}`)
+  }
+  try {
+    return parseJsonc(text)
+  } catch (e) {
+    throw new Error(`${file} is not valid JSONC (${e.message})`)
   }
 }
 
@@ -100,9 +120,9 @@ export function resolveContext(opts = {}) {
 
 /** Merge user config under the context's own config (project overrides user). */
 export function loadConfig(ctx) {
-  const user = readJsoncSafe(USER_CONFIG, {})
+  const user = readJsoncOptionalStrict(USER_CONFIG)
   if (ctx.scope === 'global') return { ...user, _sources: { user: USER_CONFIG } }
-  const project = readJsoncSafe(ctx.configFile, {})
+  const project = readJsoncOptionalStrict(ctx.configFile)
   return { ...user, ...project, _sources: { user: USER_CONFIG, project: ctx.configFile } }
 }
 
@@ -274,8 +294,65 @@ export function renderTemplate(tmpl, vars) {
 /** Resolve `${VAR}` or `env:VAR` secret references from the environment. */
 export function resolveSecret(v) {
   if (typeof v !== 'string') return v
-  let m = v.match(/^\$\{(\w+)\}$/) || v.match(/^env:(\w+)$/)
+  const m = v.match(/^\$\{(\w+)\}$/) || v.match(/^env:(\w+)$/)
   return m ? process.env[m[1]] || '' : v
+}
+
+function isInside(root, candidate) {
+  const rel = path.relative(path.resolve(root), path.resolve(candidate))
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+/** Resolve a notification file and keep it inside the project unless opted out. */
+export function resolveNotificationFile(ctx, configured, allowExternal = false) {
+  const target = path.resolve(ctx.root, resolveSecret(configured))
+  if (!allowExternal && !isInside(ctx.root, target)) {
+    throw new Error('refusing notification file outside project root (set allowExternalNotificationFile=true to opt in)')
+  }
+
+  // If the target (or an existing parent) goes through a symlink, verify its
+  // real path as well so a path that is lexically inside the project cannot
+  // escape through a symlinked directory.
+  if (!allowExternal) {
+    const rootReal = fs.realpathSync(ctx.root)
+    let probe = fs.existsSync(target) ? target : path.dirname(target)
+    while (!fs.existsSync(probe)) {
+      const parent = path.dirname(probe)
+      if (parent === probe) break
+      probe = parent
+    }
+    if (fs.existsSync(probe)) {
+      const real = fs.realpathSync(probe)
+      if (!isInside(rootReal, real)) {
+        throw new Error('refusing notification file through a symlink outside project root')
+      }
+    }
+  }
+  return target
+}
+
+/** Validate literal/resolved Slack and Discord webhook destinations. */
+export function validateWebhookUrl(channel, raw) {
+  let url
+  try {
+    url = new URL(String(raw))
+  } catch {
+    throw new Error(`invalid ${channel} webhook URL`)
+  }
+  if (url.protocol !== 'https:') throw new Error(`${channel} webhook must use https`)
+
+  if (channel === 'slack') {
+    const hosts = new Set(['hooks.slack.com', 'hooks.slack-gov.com'])
+    if (!hosts.has(url.hostname) || !url.pathname.startsWith('/services/')) {
+      throw new Error('slack webhook must use hooks.slack.com (or hooks.slack-gov.com) /services/...')
+    }
+  } else if (channel === 'discord') {
+    const hosts = new Set(['discord.com', 'www.discord.com', 'discordapp.com', 'www.discordapp.com'])
+    if (!hosts.has(url.hostname) || !url.pathname.startsWith('/api/webhooks/')) {
+      throw new Error('discord webhook must use a Discord /api/webhooks/... URL')
+    }
+  }
+  return url.toString()
 }
 
 /**
@@ -283,13 +360,14 @@ export function resolveSecret(v) {
  * [{ channel, ok, detail }]. Reads config from the given context.
  */
 export async function sendNotification(message, ctx, vars = {}) {
-  const n = (loadConfig(ctx).notifications) || {}
+  const cfg = loadConfig(ctx)
+  const n = cfg.notifications || {}
   const text = renderTemplate(message, { projectName: ctx.projectName, ...vars })
   const results = []
 
   if (n.file) {
     try {
-      const target = path.resolve(ctx.root, resolveSecret(n.file))
+      const target = resolveNotificationFile(ctx, n.file, cfg.allowExternalNotificationFile === true)
       fs.appendFileSync(target, `[${new Date().toISOString()}] ${text}\n`)
       results.push({ channel: 'file', ok: true, detail: n.file })
     } catch (e) {
@@ -302,10 +380,24 @@ export async function sendNotification(message, ctx, vars = {}) {
   if (tgToken && tgChat) {
     results.push(await post('telegram', `https://api.telegram.org/bot${tgToken}/sendMessage`, { chat_id: tgChat, text }))
   }
+
   const discord = resolveSecret(n.discord?.webhook)
-  if (discord) results.push(await post('discord', discord, { content: text }))
+  if (discord) {
+    try {
+      results.push(await post('discord', validateWebhookUrl('discord', discord), { content: text }))
+    } catch (e) {
+      results.push({ channel: 'discord', ok: false, detail: e.message })
+    }
+  }
+
   const slack = resolveSecret(n.slack?.webhook)
-  if (slack) results.push(await post('slack', slack, { text }))
+  if (slack) {
+    try {
+      results.push(await post('slack', validateWebhookUrl('slack', slack), { text }))
+    } catch (e) {
+      results.push({ channel: 'slack', ok: false, detail: e.message })
+    }
+  }
 
   return results
 }
