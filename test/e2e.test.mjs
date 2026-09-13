@@ -186,6 +186,19 @@ test('customPresets inherit the default preset for omitted tiers', () => {
   assert.ok(impl.includes(`model: '${models.presets.balanced.coding}'`), 'omitted coding tier should inherit balanced.coding')
 })
 
+test('a custom balanced preset is applied during install even without an explicit modelPreset', () => {
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ customPresets: { balanced: { strong: 'test/refined-balanced-strong' } } }, null, 2),
+  )
+  const res = omf(['install'])
+  assert.equal(res.status, 0, res.stderr)
+  const team = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'omf-team.ts'), 'utf8')
+  assert.match(team, /model:\s*'test\/refined-balanced-strong'/)
+})
+
 test('customPresets can explicitly extend another preset', () => {
   omf(['install'])
   const cfgDir = path.join(dir, '.freebuff')
