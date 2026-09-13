@@ -15,14 +15,21 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OMF = path.join(ROOT, 'bin', 'omf.mjs')
 
+const sdkRoot = process.env.OMF_CODEBUFF_SDK_ROOT
+  ? path.resolve(process.env.OMF_CODEBUFF_SDK_ROOT)
+  : ROOT
+const sdkRequire = createRequire(path.join(sdkRoot, 'package.json'))
 let sdk = null
+let sdkEntry = null
 try {
-  sdk = await import('@codebuff/sdk')
+  sdkEntry = sdkRequire.resolve('@codebuff/sdk')
+  sdk = await import(pathToFileURL(sdkEntry).href)
 } catch {
   /* not installed — tests below skip */
 }
@@ -79,7 +86,7 @@ test('every model id in models.json is one the SDK recognizes', skipIfNoSdk, asy
   // accepts anything — but the enumerated literals are the models Codebuff/
   // OpenRouter actually know. Extract them and assert our presets only use those,
   // so a stale/typo'd slug fails CI here instead of at a user's terminal.
-  const dts = path.join(ROOT, 'node_modules', '@codebuff', 'sdk', 'dist', 'index.d.ts')
+  const dts = path.join(path.dirname(sdkEntry), 'index.d.ts')
   const known = new Set([...fs.readFileSync(dts, 'utf8').matchAll(/"([a-z0-9-]+\/[a-z0-9.:@-]+)"/g)].map((m) => m[1]))
   assert.ok(known.size > 20, 'failed to parse SDK model list')
   const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))

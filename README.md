@@ -51,7 +51,7 @@ Pick one by the shape of the task. Full guide in [docs/MODES.md](./docs/MODES.md
 | `omf-pipeline` | Strict sequential stages. The coarse research → design → plan → implement → test → review order is enforced by `handleSteps`; an optional `verifyCommand` is a deterministic final gate. |
 | `omf-ultrawork` | Many independent edits in parallel: rename everywhere, apply a rule across the repo. |
 | `omf-ultraqa` | Drive the whole quality gate to zero failures. Optional `gateCommands` are re-run by the harness on every completion attempt. |
-| `omf-ralph` | Loop on one check command until it passes. Won't report green on a red check. |
+| `omf-ralph` | Loop on one check command. With `verifyCommand`, the harness machine-enforces exit 0 before success. |
 | `omf-ralplan` | Generate competing plans, critique them against each other, merge into one. |
 | `omf-advisor` | A second opinion: the same question sent to three different models, reconciled. |
 | `omf-deep-interview` | Turn a vague request into a spec with a few pointed questions. |
@@ -223,8 +223,11 @@ omf-team
 
 `omf-ralph`, `omf-ultraqa`, and `omf-pipeline` also use programmatic
 `handleSteps` logic for guarantees that should not depend only on prompt
-obedience. Ralph and UltraQA re-run real commands before allowing success;
-Pipeline enforces its coarse stage order and can enforce a final command.
+obedience. Ralph re-runs a real command before allowing success when
+`verifyCommand` is supplied; UltraQA does the same for `gateCommands`. Without
+those explicit parameters, their discovered-check loops remain prompt-driven.
+Pipeline always enforces its coarse stage order and can optionally enforce a
+final `verifyCommand`.
 
 ## What goes where
 

@@ -239,6 +239,26 @@ test('unknown modelOverrides are rejected instead of silently doing nothing', ()
   assert.match(res.stderr, /unknown agent/)
 })
 
+test('invalid model override cannot partially rewrite an installed preset', () => {
+  omf(['install'])
+  const pack = path.join(dir, '.agents', 'oh-my-freebuff')
+  const architectFile = path.join(pack, 'architect.ts')
+  const reviewerFile = path.join(pack, 'reviewer.ts')
+  const architectBefore = fs.readFileSync(architectFile, 'utf8')
+  const reviewerBefore = fs.readFileSync(reviewerFile, 'utf8')
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ modelOverrides: { architect: 'test/valid-model', reviewer: '' } }, null, 2),
+  )
+  const res = omf(['preset', 'premium'])
+  assert.notEqual(res.status, 0)
+  assert.match(res.stderr, /missing\/empty\/non-string model id/)
+  assert.equal(fs.readFileSync(architectFile, 'utf8'), architectBefore)
+  assert.equal(fs.readFileSync(reviewerFile, 'utf8'), reviewerBefore)
+})
+
 test('doctor flags an unknown configured preset', () => {
   omf(['install'])
   omf(['config', 'set', 'modelPreset', 'patates'])

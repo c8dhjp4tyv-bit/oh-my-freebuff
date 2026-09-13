@@ -1,0 +1,8 @@
+{
+  "name": "oh-my-freebuff-codebuff-sdk-0.10.7-smoke",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@codebuff/sdk": "0.10.7"
+  }
+}

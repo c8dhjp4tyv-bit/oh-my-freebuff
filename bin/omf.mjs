@@ -329,8 +329,16 @@ function applyPresetToDir(ctx, targetDir, name, cfg = loadConfig(ctx)) {
   }
   const unknownOverrides = Object.keys(overrides).filter((id) => !manifest[id])
   if (unknownOverrides.length) throw new Error(`modelOverrides reference unknown agent(s): ${unknownOverrides.join(', ')}`)
+  const invalidOverrides = Object.entries(overrides)
+    .filter(([, model]) => typeof model !== 'string' || model.trim().length === 0)
+    .map(([id]) => id)
+  if (invalidOverrides.length) {
+    throw new Error(`modelOverrides contain missing/empty/non-string model id(s): ${invalidOverrides.join(', ')}`)
+  }
 
-  let changed = 0
+  // Build the complete edit plan before the first write. If any model is invalid,
+  // fail with the installed pack untouched instead of leaving a mixed preset.
+  const edits = []
   let overridden = 0
   for (const file of fs.readdirSync(targetDir).filter((f) => f.endsWith('.ts'))) {
     const filePath = path.join(targetDir, file)
@@ -340,15 +348,17 @@ function applyPresetToDir(ctx, targetDir, name, cfg = loadConfig(ctx)) {
     const id = idMatch[1]
     const usingOverride = Object.prototype.hasOwnProperty.call(overrides, id)
     const model = usingOverride ? overrides[id] : preset[manifest[id]]
-    if (!model || typeof model !== 'string') throw new Error(`no model resolved for agent "${id}"`)
+    if (typeof model !== 'string' || model.trim().length === 0) {
+      throw new Error(`no valid model resolved for agent "${id}"`)
+    }
     const next = src.replace(/^(\s*model:\s*)'[^']*'/m, `$1'${model}'`)
     if (next !== src) {
-      fs.writeFileSync(filePath, next)
-      changed++
+      edits.push({ filePath, next })
       if (usingOverride) overridden++
     }
   }
-  return { models, preset, changed, overridden }
+  for (const { filePath, next } of edits) fs.writeFileSync(filePath, next)
+  return { models, preset, changed: edits.length, overridden }
 }
 
 function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
