@@ -136,14 +136,14 @@ function cmdInstall(ctx, opts) {
   // broken custom preset or bad override therefore cannot destroy the old pack.
   const cfg = loadConfig(ctx)
   const preset = cfg.modelPreset
-  const overrides = cfg.modelOverrides || {}
 
   const staged = `${ctx.packDir}.tmp-${process.pid}-${Date.now()}`
   populatePackDir(staged)
   try {
-    if ((preset && preset !== 'balanced') || Object.keys(overrides).length) {
-      applyPresetToDir(ctx, staged, preset || 'balanced', cfg)
-    }
+    // Always resolve and apply the effective preset, even when it is named
+    // "balanced": users may refine the built-in balanced preset in
+    // customPresets, and overrides must be validated on every install/update.
+    applyPresetToDir(ctx, staged, preset || 'balanced', cfg)
     swapPackDir(ctx, staged)
   } catch (e) {
     fs.rmSync(staged, { recursive: true, force: true })
