@@ -21,9 +21,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  # Real-runtime compatibility: load the installed pack through the actual
-  # Codebuff SDK. Runs against @codebuff/sdk@latest so we find out here — not in
-  # a user's terminal — if a Codebuff change breaks agent/skill discovery.
+  # Stable runtime compatibility gate. Pin the SDK here so a surprise upstream
+  # release cannot make an otherwise unrelated PR nondeterministically red.
+  # The separate weekly canary workflow tests @latest and tells us when it is
+  # safe/necessary to bump this known-good version.
   codebuff-compat:
     runs-on: ubuntu-latest
     steps:
@@ -33,5 +34,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm i --no-save @codebuff/sdk@latest
+      - run: npm i --no-save @codebuff/sdk@0.10.7
       - run: npm run smoke
