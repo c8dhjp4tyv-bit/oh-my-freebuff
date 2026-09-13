@@ -39,13 +39,24 @@ out.
 
 ## Deterministic orchestration
 
-Most orchestrators are prompt-driven, which is enough for their branching logic.
-`omf-ralph` additionally uses Codebuff's `handleSteps` generator: when given a
-`verifyCommand` param, the harness re-runs that command each time the agent tries
-to finish and refuses to stop while it fails (bounded by a hard iteration cap).
-This moves the one guarantee that matters most — "don't declare success on a red
-check" — from prompt text into code. `omf-ultraqa` and `omf-pipeline` remain
-prompt-driven for now; converting them is a reasonable next step.
+Branching and judgment-heavy decisions still belong to the model, but guarantees
+that can be expressed mechanically are increasingly enforced by Codebuff's
+`handleSteps` generator instead of prompt text alone:
+
+- **`omf-ralph`** accepts a `verifyCommand`. Every completion attempt re-runs the
+  exact command; the turn cannot finish green while it exits non-zero, and a hard
+  iteration cap produces an explicit failed output rather than a false success.
+- **`omf-ultraqa`** accepts a list of `gateCommands`. On every apparent finish,
+  the harness re-runs the entire gate set and keeps the agent working until every
+  command exits 0 or `maxCycles` is exhausted.
+- **`omf-pipeline`** enforces the coarse research → design → plan → implement →
+  test → review/fix stage order programmatically. The model still decomposes the
+  plan into atomic implementation tasks where judgment is needed. An optional
+  `verifyCommand` provides a final deterministic success gate.
+
+This keeps flexible reasoning where it adds value while moving "must be true"
+conditions — command exit status and stage ordering — into executable control
+flow.
 
 ## Left out
 
