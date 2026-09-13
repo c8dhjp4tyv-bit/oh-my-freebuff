@@ -1,3 +1,4 @@
+# temporary one-shot workflow; remove after review fixes land
 name: Apply review fixes (temporary)
 
 on:
@@ -33,8 +34,6 @@ jobs:
                   raise SystemExit(f'expected block not found in {path}')
               p.write_text(text.replace(old, new, 1))
 
-          # 1) applyPresetToDir: validate every override and compute every edit
-          # before touching a single agent file.
           replace('bin/omf.mjs', '''  const unknownOverrides = Object.keys(overrides).filter((id) => !manifest[id])
   if (unknownOverrides.length) throw new Error(`modelOverrides reference unknown agent(s): ${unknownOverrides.join(', ')}`)
 
@@ -66,8 +65,6 @@ jobs:
     throw new Error(`modelOverrides contain missing/empty/non-string model id(s): ${invalidOverrides.join(', ')}`)
   }
 
-  // Build the complete edit plan first. If any agent/model is invalid, throw
-  // before the first write so `omf preset` can never leave a mixed preset behind.
   const edits = []
   let overridden = 0
   for (const file of fs.readdirSync(targetDir).filter((f) => f.endsWith('.ts'))) {
@@ -91,7 +88,6 @@ jobs:
   return { models, preset, changed: edits.length, overridden }
 ''')
 
-          # Regression: a bad later override must not leave earlier files rewritten.
           replace('test/e2e.test.mjs', '''test('unknown modelOverrides are rejected instead of silently doing nothing', () => {
   omf(['install'])
   omf(['config', 'set', 'modelOverrides.not-a-real-agent', 'test/model'])
@@ -120,7 +116,6 @@ test('invalid model override cannot partially rewrite an installed preset', () =
     path.join(cfgDir, 'omf.jsonc'),
     JSON.stringify({ modelOverrides: { architect: 'test/valid-model', reviewer: '' } }, null, 2),
   )
-
   const res = omf(['preset', 'premium'])
   assert.notEqual(res.status, 0)
   assert.match(res.stderr, /missing\/empty\/non-string model id/)
@@ -129,7 +124,6 @@ test('invalid model override cannot partially rewrite an installed preset', () =
 })
 ''')
 
-          # README: only explicit command params are machine-enforced for Ralph/UltraQA.
           replace('README.md', '''`omf-ralph`, `omf-ultraqa`, and `omf-pipeline` also use programmatic
 `handleSteps` logic for guarantees that should not depend only on prompt
 obedience. Ralph and UltraQA re-run real commands before allowing success;
@@ -146,9 +140,7 @@ final `verifyCommand`.
 ''', '''| `omf-ralph` | Loop on one check command. With `verifyCommand`, the harness machine-enforces exit 0 before success. |
 ''')
 
-          # Workflow hardening and deterministic stable SDK fixture.
-          ci = Path('.github/workflows/ci.yml')
-          ci.write_text('''name: CI
+          Path('.github/workflows/ci.yml').write_text('''name: CI
 
 on:
   push:
@@ -176,8 +168,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  # Stable runtime compatibility gate. Both the SDK version and its transitive
-  # dependency graph are committed in the fixture lockfile.
   codebuff-compat:
     runs-on: ubuntu-latest
     steps:
@@ -196,8 +186,7 @@ jobs:
           OMF_CODEBUFF_SDK_ROOT: ${{ github.workspace }}/test/fixtures/codebuff-sdk-0.10.7
 ''')
 
-          canary = Path('.github/workflows/codebuff-canary.yml')
-          canary.write_text('''name: Codebuff SDK canary
+          Path('.github/workflows/codebuff-canary.yml').write_text('''name: Codebuff SDK canary
 
 on:
   schedule:
@@ -225,8 +214,6 @@ jobs:
         run: npm run smoke
 ''')
 
-          # Stable fixture package. package-lock.json is generated in the next step
-          # by npm itself and committed by this one-shot workflow.
           fixture = Path('test/fixtures/codebuff-sdk-0.10.7')
           fixture.mkdir(parents=True, exist_ok=True)
           (fixture / 'package.json').write_text(json.dumps({
@@ -236,8 +223,6 @@ jobs:
               'dependencies': {'@codebuff/sdk': '0.10.7'},
           }, indent=2) + '\n')
 
-          # Let the smoke suite resolve the SDK from either the normal root install
-          # (canary/local) or the dedicated stable fixture (PR/push compatibility).
           smoke = Path('test/smoke-codebuff.mjs')
           s = smoke.read_text()
           s = s.replace("import { fileURLToPath } from 'node:url'", "import { fileURLToPath, pathToFileURL } from 'node:url'\nimport { createRequire } from 'node:module'")
