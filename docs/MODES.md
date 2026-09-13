@@ -10,13 +10,30 @@ Pick by shape of the task:
 | --- | --- | --- | --- |
 | **Team** | `omf-team` | Anything non-trivial; the default | Research → design → plan → implement → test → review, looping back on review findings. Parallelizes independent work. |
 | **Autopilot** | `omf-autopilot` | Well-defined task, less ceremony | One capable agent drives directly; pulls in researcher/reviewer/debugger only when it helps. |
-| **Pipeline** | `omf-pipeline` | Order & auditability matter | Strict sequential stages with an explicit gate between each. No parallelism. |
+| **Pipeline** | `omf-pipeline` | Order & auditability matter | `handleSteps` enforces research → design → plan → implement → test → review/fix in sequence. Optional `verifyCommand` is a final machine-checked gate. |
 | **Ultrawork** | `omf-ultrawork` | Many independent edits | Partitions work into non-overlapping slices and runs a swarm of implementers in parallel, then reconciles. |
-| **UltraQA** | `omf-ultraqa` | "Get the whole repo green" | Cycles the full quality gate (tests + typecheck + lint + build) to zero failures, adds missing tests. |
-| **Ralph** | `omf-ralph` | "Make `<command>` pass" | Persistent verify-fix loop against one check command. Refuses to fake green. |
+| **UltraQA** | `omf-ultraqa` | "Get the whole repo green" | Cycles the full quality gate (tests + typecheck + lint + build). Optional `gateCommands` are re-run by the harness before success is allowed. |
+| **Ralph** | `omf-ralph` | "Make `<command>` pass" | Persistent verify-fix loop against one check command. With `verifyCommand`, the harness refuses to fake green. |
 | **Ralplan** | `omf-ralplan` | High-stakes / ambiguous planning | Generates competing plans, critiques them against each other, synthesizes one. |
 | **Advisor** | `omf-advisor` | Judgment calls, second opinions | Asks the same question to three different models and reconciles them. |
 | **Deep Interview** | `omf-deep-interview` | Vague request | Socratic questions turn it into a precise, buildable spec. |
+
+## Deterministic gates
+
+The model still makes judgment-heavy decisions, but three modes move mechanical
+success conditions into executable `handleSteps` control flow:
+
+- `omf-ralph`: pass `params.verifyCommand` to require one exact command to exit 0.
+- `omf-ultraqa`: pass `params.gateCommands` (array of exact commands) to require
+  the complete set to exit 0 on the same completion attempt. `maxCycles` defaults
+  to 6.
+- `omf-pipeline`: stage order is always programmatic. Optionally pass
+  `params.verifyCommand` for a final exact command; `maxVerificationAttempts`
+  defaults to 4.
+
+Without optional command parameters, Ralph/UltraQA can still discover checks from
+the repository and operate prompt-driven around them; the explicit params are the
+way to request a hard machine-enforced exit-status contract.
 
 ## Rules of thumb
 
