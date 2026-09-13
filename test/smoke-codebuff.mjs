@@ -29,7 +29,14 @@ let sdk = null
 let sdkEntry = null
 try {
   sdkEntry = sdkRequire.resolve('@codebuff/sdk')
-  sdk = await import(pathToFileURL(sdkEntry).href)
+  const imported = await import(pathToFileURL(sdkEntry).href)
+  // Resolving through createRequire may select the package's CommonJS entry.
+  // Dynamic import wraps that shape under `default`, while a normal ESM import
+  // exposes named exports directly. Normalize both so the same smoke suite works
+  // for the locked fixture and for local/canary installs.
+  sdk = typeof imported.loadLocalAgents === 'function'
+    ? imported
+    : imported.default || imported
 } catch {
   /* not installed — tests below skip */
 }
