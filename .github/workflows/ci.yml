@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,6 +16,8 @@ jobs:
         node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -21,17 +26,21 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  # Real-runtime compatibility: load the installed pack through the actual
-  # Codebuff SDK. Runs against @codebuff/sdk@latest so we find out here — not in
-  # a user's terminal — if a Codebuff change breaks agent/skill discovery.
+  # Stable runtime compatibility gate. Both the SDK version and its transitive
+  # dependency graph are committed in the fixture lockfile.
   codebuff-compat:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm i --no-save @codebuff/sdk@latest
-      - run: npm run smoke
+          cache-dependency-path: test/fixtures/codebuff-sdk-0.10.7/package-lock.json
+      - run: npm ci --prefix test/fixtures/codebuff-sdk-0.10.7
+      - name: Smoke-test pinned Codebuff SDK graph
+        run: npm run smoke
+        env:
+          OMF_CODEBUFF_SDK_ROOT: ${{ github.workspace }}/test/fixtures/codebuff-sdk-0.10.7

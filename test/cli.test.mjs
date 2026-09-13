@@ -8,7 +8,8 @@ import path from 'node:path'
 import {
   parseJsonc, resolveContext, setConfigValue, getConfigValue, loadConfig,
   redactConfig, isSecretKeyPath, renderTemplate, resolveSecret, normalizeSkillName,
-  skillDirFor, sendNotification, readJsoncForWrite, readReceipt, writeReceipt,
+  skillDirFor, sendNotification, readJsoncForWrite, readJsoncOptionalStrict,
+  resolveNotificationFile, validateWebhookUrl, readReceipt, writeReceipt,
   removeReceipt, sha256,
 } from '../bin/lib.mjs'
 
@@ -96,6 +97,21 @@ test('readJsoncForWrite: missing file is {}, malformed throws', () => {
   assert.throws(() => readJsoncForWrite(bad), /not valid JSONC|Refusing/)
 })
 
+test('readJsoncOptionalStrict: missing is {}, malformed config is not silently ignored', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-strict-jsonc-'))
+  assert.deepEqual(readJsoncOptionalStrict(path.join(dir, 'missing.jsonc')), {})
+  const bad = path.join(dir, 'bad.jsonc')
+  fs.writeFileSync(bad, '{ "x": true oops }')
+  assert.throws(() => readJsoncOptionalStrict(bad), /not valid JSONC/)
+})
+
+test('loadConfig fails on malformed project config instead of treating it as empty', () => {
+  const ctx = ctxAt(fs.mkdtempSync(path.join(os.tmpdir(), 'omf-loadcfg-')))
+  fs.mkdirSync(ctx.configDir, { recursive: true })
+  fs.writeFileSync(ctx.configFile, '{ nope')
+  assert.throws(() => loadConfig(ctx), /not valid JSONC/)
+})
+
 test('setConfigValue aborts on a malformed existing config (no data loss)', () => {
   const ctx = resolveContext({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'omf-badcfg-')) })
   fs.mkdirSync(ctx.configDir, { recursive: true })
@@ -148,6 +164,30 @@ test('resolveSecret reads ${VAR} and env: references', () => {
   delete process.env.OMF_TEST_SECRET
 })
 
+test('notification file stays inside project by default, with explicit external opt-in', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-notify-path-'))
+  const ctx = ctxAt(dir)
+  assert.equal(resolveNotificationFile(ctx, './logs/done.log'), path.join(dir, 'logs', 'done.log'))
+  const outside = path.join(dir, '..', 'outside.log')
+  assert.throws(() => resolveNotificationFile(ctx, outside), /outside project root/)
+  assert.equal(resolveNotificationFile(ctx, outside, true), path.resolve(outside))
+})
+
+test('notification file cannot escape through an existing symlinked directory', { skip: process.platform === 'win32' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-notify-link-'))
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-notify-outside-'))
+  fs.symlinkSync(outside, path.join(dir, 'escape'), 'dir')
+  const ctx = ctxAt(dir)
+  assert.throws(() => resolveNotificationFile(ctx, './escape/log.txt'), /symlink outside/)
+})
+
+test('validateWebhookUrl accepts canonical Slack/Discord webhooks and rejects arbitrary hosts/http', () => {
+  assert.match(validateWebhookUrl('slack', 'https://hooks.slack.com/services/T/B/X'), /^https:/)
+  assert.match(validateWebhookUrl('discord', 'https://discord.com/api/webhooks/1/token'), /^https:/)
+  assert.throws(() => validateWebhookUrl('slack', 'https://example.com/services/T/B/X'), /slack webhook/)
+  assert.throws(() => validateWebhookUrl('discord', 'http://discord.com/api/webhooks/1/token'), /https/)
+})
+
 test('sendNotification writes to the file channel, resolving env-var secrets', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-notify-'))
   const ctx = ctxAt(dir)
@@ -158,6 +198,17 @@ test('sendNotification writes to the file channel, resolving env-var secrets', a
   assert.equal(results[0].ok, true)
   const logged = fs.readFileSync(path.join(dir, 'notify.log'), 'utf8')
   assert.match(logged, new RegExp(`done in ${path.basename(dir)}`))
+})
+
+test('sendNotification rejects a non-provider webhook without making it a successful channel', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-notify-host-'))
+  const ctx = ctxAt(dir)
+  setConfigValue(ctx, 'notifications.discord.webhook', 'https://example.com/api/webhooks/1/x')
+  const results = await sendNotification('x', ctx)
+  assert.equal(results.length, 1)
+  assert.equal(results[0].channel, 'discord')
+  assert.equal(results[0].ok, false)
+  assert.match(results[0].detail, /discord webhook/)
 })
 
 test('sendNotification returns empty when nothing is configured', async () => {

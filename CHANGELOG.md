@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [0.3.0]
+
+Reliability and deterministic-orchestration release.
+
+### Added
+
+- **Weekly Codebuff SDK canary.** Normal PR/push CI now smoke-tests the pinned
+  known-good `@codebuff/sdk@0.10.7`; a separate scheduled/manual workflow tests
+  `@codebuff/sdk@latest`, so upstream breakage is detected even when this repo
+  receives no commits without making unrelated PRs nondeterministically red.
+- **Custom preset inheritance.** Partial `customPresets` inherit `balanced` by
+  default or an explicit `extends` preset. Cycles, unknown parents, incomplete
+  resolved tiers, malformed override maps, and overrides targeting nonexistent
+  agents are rejected.
+- **Harness-backed UltraQA gates.** `omf-ultraqa` accepts `gateCommands` and
+  re-runs every command on every completion attempt until all exit 0 or the hard
+  `maxCycles` limit is reached.
+- **Programmatic Pipeline stage order.** `omf-pipeline` now uses `handleSteps` to
+  enforce research → design → plan → implement → test → review/fix in code. An
+  optional `verifyCommand` is a deterministic final success gate.
+
+### Changed
+
+- **Pack updates are staged and atomically swapped.** `install --force` / `update`
+  no longer deletes the working `.agents/oh-my-freebuff` tree before the new
+  pack and routing config have been prepared successfully. A failed staged
+  update leaves the previous working pack in place.
+- **Reviewer is capability-level read-only.** `reviewer` no longer has
+  `run_terminal_command`; tests/commands are delegated to tester/debugger/the
+  parent instead of relying on a prompt-only promise not to mutate the repo.
+- The local `AgentDefinition` shim now tracks Codebuff's `STEP_TEXT` /
+  `GENERATE_N` handleSteps yield shapes used by programmatic orchestrators.
+
+### Fixed
+
+- **Malformed config is no longer silently treated as `{}` on reads.** User and
+  project config are parsed strictly; `omf config`, setup and routing operations
+  fail clearly, while `omf doctor` reports the parse failure as a failed check.
+- **Notification destinations are constrained.** Slack/Discord webhooks must be
+  HTTPS provider webhook URLs. File notifications stay inside the project root
+  by default (including existing symlink resolution); external writes require
+  explicit `allowExternalNotificationFile: true`.
+- **Verification sentinels use the final emitted status.** Ralph, UltraQA and
+  Pipeline read the last appended exit marker, preventing command output that
+  merely resembles a marker from spoofing the final gate status.
+- `omf doctor` now validates custom preset inheritance and model override targets.
+
 ## [0.2.4]
 
 Release/showcase polish — no code behavior change.

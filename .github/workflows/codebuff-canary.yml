@@ -1,0 +1,26 @@
+name: Codebuff SDK canary
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install latest Codebuff SDK
+        run: npm i --no-save @codebuff/sdk@latest
+      - name: Smoke-test latest SDK
+        run: npm run smoke

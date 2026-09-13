@@ -123,6 +123,16 @@ test('config get on a secret key is redacted unless --show-secrets', () => {
   assert.match(omf(['config', 'get', 'notifications.telegram.token', '--show-secrets']).stdout, /BOT-TOKEN-123/)
 })
 
+test('notify setup rejects a literal Slack/Discord webhook on an arbitrary host', () => {
+  const badSlack = omf(['notify', 'setup', 'slack', 'https://example.com/services/T/B/X'])
+  assert.notEqual(badSlack.status, 0)
+  assert.match(badSlack.stderr, /slack webhook/)
+
+  const badDiscord = omf(['notify', 'setup', 'discord', 'http://discord.com/api/webhooks/1/x'])
+  assert.notEqual(badDiscord.status, 0)
+  assert.match(badDiscord.stderr, /https/)
+})
+
 test('uninstall does NOT delete a user-owned skill with a shipped name', () => {
   // user has their own verify-before-done BEFORE installing
   const userSkill = path.join(dir, '.agents', 'skills', 'verify-before-done', 'SKILL.md')
@@ -159,18 +169,94 @@ test('modelOverrides pin an agent and survive update', () => {
   assert.match(impl, /model:\s*'test\/pinned-model'/)
 })
 
-test('customPresets can be applied by name', () => {
+test('customPresets inherit the default preset for omitted tiers', () => {
   omf(['install'])
   const cfgDir = path.join(dir, '.freebuff')
   fs.mkdirSync(cfgDir, { recursive: true })
   fs.writeFileSync(
     path.join(cfgDir, 'omf.jsonc'),
-    JSON.stringify({ customPresets: { mine: { description: 'x', strong: 'test/strong-x' } } }, null, 2),
+    JSON.stringify({ customPresets: { mine: { description: 'partial override', strong: 'test/strong-x' } } }, null, 2),
   )
   const res = omf(['preset', 'mine'])
   assert.equal(res.status, 0, res.stderr)
+  const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))
   const team = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'omf-team.ts'), 'utf8')
-  assert.match(team, /model:\s*'test\/strong-x'/) // omf-team is a strong-tier agent
+  const impl = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'implementer.ts'), 'utf8')
+  assert.match(team, /model:\s*'test\/strong-x'/)
+  assert.ok(impl.includes(`model: '${models.presets.balanced.coding}'`), 'omitted coding tier should inherit balanced.coding')
+})
+
+test('a custom balanced preset is applied during install even without an explicit modelPreset', () => {
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ customPresets: { balanced: { strong: 'test/refined-balanced-strong' } } }, null, 2),
+  )
+  const res = omf(['install'])
+  assert.equal(res.status, 0, res.stderr)
+  const team = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'omf-team.ts'), 'utf8')
+  assert.match(team, /model:\s*'test\/refined-balanced-strong'/)
+})
+
+test('customPresets can explicitly extend another preset', () => {
+  omf(['install'])
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ customPresets: { mine: { extends: 'premium', strong: 'test/strong-x' } } }, null, 2),
+  )
+  assert.equal(omf(['preset', 'mine']).status, 0)
+  const models = JSON.parse(fs.readFileSync(path.join(ROOT, 'models.json'), 'utf8'))
+  const picker = fs.readFileSync(path.join(dir, '.agents', 'oh-my-freebuff', 'file-picker.ts'), 'utf8')
+  assert.ok(picker.includes(`model: '${models.presets.premium.fast}'`), 'explicit extends should inherit premium.fast')
+})
+
+test('broken routing config fails update before replacing the working pack', () => {
+  assert.equal(omf(['install']).status, 0)
+  const pack = path.join(dir, '.agents', 'oh-my-freebuff')
+  const marker = path.join(pack, 'working-install-marker.txt')
+  fs.writeFileSync(marker, 'keep me\n')
+
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ modelPreset: 'broken', customPresets: { broken: { extends: 'does-not-exist' } } }, null, 2),
+  )
+  const res = omf(['update'])
+  assert.notEqual(res.status, 0)
+  assert.match(res.stderr, /unknown preset/)
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'keep me\n', 'old working pack must survive a failed staged update')
+})
+
+test('unknown modelOverrides are rejected instead of silently doing nothing', () => {
+  omf(['install'])
+  omf(['config', 'set', 'modelOverrides.not-a-real-agent', 'test/model'])
+  const res = omf(['update'])
+  assert.notEqual(res.status, 0)
+  assert.match(res.stderr, /unknown agent/)
+})
+
+test('invalid model override cannot partially rewrite an installed preset', () => {
+  omf(['install'])
+  const pack = path.join(dir, '.agents', 'oh-my-freebuff')
+  const architectFile = path.join(pack, 'architect.ts')
+  const reviewerFile = path.join(pack, 'reviewer.ts')
+  const architectBefore = fs.readFileSync(architectFile, 'utf8')
+  const reviewerBefore = fs.readFileSync(reviewerFile, 'utf8')
+  const cfgDir = path.join(dir, '.freebuff')
+  fs.mkdirSync(cfgDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(cfgDir, 'omf.jsonc'),
+    JSON.stringify({ modelOverrides: { architect: 'test/valid-model', reviewer: '' } }, null, 2),
+  )
+  const res = omf(['preset', 'premium'])
+  assert.notEqual(res.status, 0)
+  assert.match(res.stderr, /missing\/empty\/non-string model id/)
+  assert.equal(fs.readFileSync(architectFile, 'utf8'), architectBefore)
+  assert.equal(fs.readFileSync(reviewerFile, 'utf8'), reviewerBefore)
 })
 
 test('doctor flags an unknown configured preset', () => {
@@ -178,6 +264,17 @@ test('doctor flags an unknown configured preset', () => {
   omf(['config', 'set', 'modelPreset', 'patates'])
   const d = omf(['doctor'])
   assert.match(d.stdout, /not a known preset/)
+})
+
+test('doctor reports malformed config instead of silently treating it as empty', () => {
+  omf(['install'])
+  const cfg = path.join(dir, '.freebuff', 'omf.jsonc')
+  fs.mkdirSync(path.dirname(cfg), { recursive: true })
+  fs.writeFileSync(cfg, '{ broken')
+  const d = omf(['doctor'])
+  assert.notEqual(d.status, 0)
+  assert.match(d.stdout, /config files parse/)
+  assert.match(d.stdout, /not valid JSONC/)
 })
 
 test('uninstall removes an unmodified shipped skill it installed', () => {

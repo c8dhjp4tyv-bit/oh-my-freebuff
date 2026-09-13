@@ -8,7 +8,7 @@ import {
   c, paint, readPackVersion, which, resolveContext, PACK_NAME, readJsonc,
   readJsoncSafe, loadConfig, setConfigValue, getConfigValue, redactConfig,
   isSecretKeyPath, REDACTED, sendNotification, skillDirFor, isGitIgnored,
-  USER_CONFIG, readReceipt, writeReceipt, removeReceipt, sha256,
+  validateWebhookUrl, USER_CONFIG, readReceipt, writeReceipt, removeReceipt, sha256,
 } from './lib.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -75,6 +75,56 @@ function requireInstalled(ctx) {
 
 // ---- install / update / uninstall ------------------------------------------
 
+function populatePackDir(dest) {
+  fs.rmSync(dest, { recursive: true, force: true })
+  copyDir(path.join(PACK_ROOT, 'agents'), dest)
+  for (const extra of ['agents.manifest.json', 'models.json']) {
+    fs.copyFileSync(path.join(PACK_ROOT, extra), path.join(dest, extra))
+  }
+  const actual = fs.readdirSync(dest).filter((f) => f.endsWith('.ts')).length
+  const expected = listPackAgents().length
+  if (actual !== expected) throw new Error(`staged pack is incomplete: expected ${expected} agents, found ${actual}`)
+}
+
+/** Replace only the namespaced pack directory transactionally. */
+function swapPackDir(ctx, staged) {
+  fs.mkdirSync(path.dirname(ctx.packDir), { recursive: true })
+  const backup = `${ctx.packDir}.bak-${process.pid}-${Date.now()}`
+  const hadOld = fs.existsSync(ctx.packDir)
+  let oldMoved = false
+  try {
+    if (hadOld) {
+      fs.renameSync(ctx.packDir, backup)
+      oldMoved = true
+    }
+    fs.renameSync(staged, ctx.packDir)
+  } catch (e) {
+    // If the new directory failed to become live, put the old working install
+    // back. Leave a backup behind only if rollback itself fails.
+    try {
+      if (!fs.existsSync(ctx.packDir) && oldMoved && fs.existsSync(backup)) {
+        fs.renameSync(backup, ctx.packDir)
+        oldMoved = false
+      }
+    } catch (rollbackError) {
+      throw new Error(`atomic install failed: ${e.message}; rollback also failed: ${rollbackError.message}; backup: ${backup}`)
+    } finally {
+      fs.rmSync(staged, { recursive: true, force: true })
+    }
+    throw new Error(`atomic install failed: ${e.message}`)
+  }
+
+  // The live swap succeeded. Backup cleanup is best-effort and must never turn
+  // a successful update into a destructive rollback attempt.
+  if (oldMoved) {
+    try {
+      fs.rmSync(backup, { recursive: true, force: true })
+    } catch (e) {
+      err(paint(c.yellow, `! Updated successfully but could not remove backup ${backup}: ${e.message}`))
+    }
+  }
+}
+
 function cmdInstall(ctx, opts) {
   if (fs.existsSync(ctx.packDir) && !opts.force) {
     err(paint(c.yellow, `! ${PACK_NAME} is already installed at ${ctx.packDir}`))
@@ -82,11 +132,22 @@ function cmdInstall(ctx, opts) {
     process.exit(1)
   }
 
-  // Agents live in our own namespaced dir — safe to replace wholesale.
-  fs.rmSync(ctx.packDir, { recursive: true, force: true })
-  copyDir(path.join(PACK_ROOT, 'agents'), ctx.packDir)
-  for (const extra of ['agents.manifest.json', 'models.json']) {
-    fs.copyFileSync(path.join(PACK_ROOT, extra), path.join(ctx.packDir, extra))
+  // Read/validate routing before touching a working install. A malformed config,
+  // broken custom preset or bad override therefore cannot destroy the old pack.
+  const cfg = loadConfig(ctx)
+  const preset = cfg.modelPreset
+
+  const staged = `${ctx.packDir}.tmp-${process.pid}-${Date.now()}`
+  populatePackDir(staged)
+  try {
+    // Always resolve and apply the effective preset, even when it is named
+    // "balanced": users may refine the built-in balanced preset in
+    // customPresets, and overrides must be validated on every install/update.
+    applyPresetToDir(ctx, staged, preset || 'balanced', cfg)
+    swapPackDir(ctx, staged)
+  } catch (e) {
+    fs.rmSync(staged, { recursive: true, force: true })
+    throw e
   }
   // Note: we deliberately do NOT copy hooks/ into .agents — Codebuff's agent
   // loader would try to parse the .mjs there as an agent. The notify hook ships
@@ -131,14 +192,6 @@ function cmdInstall(ctx, opts) {
     }
   }
   writeReceipt(ctx, receipt)
-
-  // Re-apply routing from config (preset + per-agent overrides) onto the fresh
-  // copy, but don't create/write config just because someone ran a bare install.
-  const preset = getConfigValue(ctx, 'modelPreset')
-  const overrides = getConfigValue(ctx, 'modelOverrides')
-  if ((preset && preset !== 'balanced') || (overrides && Object.keys(overrides).length)) {
-    applyPreset(ctx, preset || 'balanced', { quiet: true, writeConfig: false })
-  }
 
   log(paint(c.green, `✓ Installed ${PACK_NAME} v${version()}`))
   log(`  ${paint(c.dim, 'agents:')}   ${listPackAgents().length}  → ${ctx.packDir}`)
@@ -203,57 +256,137 @@ function cmdList() {
 
 // ---- model presets ----------------------------------------------------------
 
-/** Built-in presets merged with any customPresets from config. */
-function loadRouting(ctx) {
-  const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
-  const custom = getConfigValue(ctx, 'customPresets') || {}
-  return { models, presets: { ...models.presets, ...custom } }
+function resolvePresets(models, custom) {
+  if (!custom || typeof custom !== 'object' || Array.isArray(custom)) {
+    throw new Error('customPresets must be an object')
+  }
+  const builtins = models.presets || {}
+  const resolved = {}
+  const resolving = new Set()
+
+  const resolveOne = (name) => {
+    if (resolved[name]) return resolved[name]
+    const hasCustom = Object.prototype.hasOwnProperty.call(custom, name)
+    const hasBuiltin = Object.prototype.hasOwnProperty.call(builtins, name)
+    if (!hasCustom && !hasBuiltin) throw new Error(`custom preset extends unknown preset "${name}"`)
+    if (resolving.has(name)) throw new Error(`custom preset inheritance cycle at "${name}"`)
+    resolving.add(name)
+
+    let out
+    if (hasCustom) {
+      const src = custom[name]
+      if (!src || typeof src !== 'object' || Array.isArray(src)) {
+        throw new Error(`custom preset "${name}" must be an object`)
+      }
+      let parent
+      if (src.extends) {
+        if (src.extends === name && hasBuiltin) parent = builtins[name]
+        else parent = resolveOne(src.extends)
+      } else if (hasBuiltin) {
+        // A custom preset may intentionally refine a built-in with the same name.
+        parent = builtins[name]
+      } else {
+        parent = resolveOne(models.defaultPreset)
+      }
+      const { extends: _extends, ...own } = src
+      out = { ...parent, ...own }
+    } else {
+      out = { ...builtins[name] }
+    }
+
+    for (const tier of models.tiers || []) {
+      if (!out[tier] || typeof out[tier] !== 'string') {
+        throw new Error(`preset "${name}" is missing model tier "${tier}" after inheritance`)
+      }
+    }
+    resolving.delete(name)
+    resolved[name] = out
+    return out
+  }
+
+  for (const name of new Set([...Object.keys(builtins), ...Object.keys(custom)])) resolveOne(name)
+  return resolved
 }
 
-function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
-  const { models, presets } = loadRouting(ctx)
-  const preset = presets[name]
-  if (!preset) {
-    err(paint(c.red, `Unknown preset: ${name}`))
-    err(paint(c.dim, `Available: ${Object.keys(presets).join(', ')}`))
-    process.exit(1)
-  }
-  requireInstalled(ctx)
-  const manifest = readJsonc(path.join(PACK_ROOT, 'agents.manifest.json')).tiers
-  const overrides = getConfigValue(ctx, 'modelOverrides') || {}
+/** Built-in presets plus resolved custom presets. Custom presets inherit the
+ * default preset unless they set `extends`; a same-name custom preset inherits
+ * the built-in it is refining. */
+function loadRouting(ctx, cfg = loadConfig(ctx)) {
+  const models = readJsonc(path.join(PACK_ROOT, 'models.json'))
+  const custom = cfg.customPresets || {}
+  return { models, presets: resolvePresets(models, custom) }
+}
 
-  let changed = 0
+function applyPresetToDir(ctx, targetDir, name, cfg = loadConfig(ctx)) {
+  const { models, presets } = loadRouting(ctx, cfg)
+  const preset = presets[name]
+  if (!preset) throw new Error(`Unknown preset: ${name}. Available: ${Object.keys(presets).join(', ')}`)
+
+  const manifest = readJsonc(path.join(PACK_ROOT, 'agents.manifest.json')).tiers
+  const overrides = cfg.modelOverrides || {}
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    throw new Error('modelOverrides must be an object')
+  }
+  const unknownOverrides = Object.keys(overrides).filter((id) => !manifest[id])
+  if (unknownOverrides.length) throw new Error(`modelOverrides reference unknown agent(s): ${unknownOverrides.join(', ')}`)
+  const invalidOverrides = Object.entries(overrides)
+    .filter(([, model]) => typeof model !== 'string' || model.trim().length === 0)
+    .map(([id]) => id)
+  if (invalidOverrides.length) {
+    throw new Error(`modelOverrides contain missing/empty/non-string model id(s): ${invalidOverrides.join(', ')}`)
+  }
+
+  // Build the complete edit plan before the first write. If any model is invalid,
+  // fail with the installed pack untouched instead of leaving a mixed preset.
+  const edits = []
   let overridden = 0
-  for (const file of fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))) {
-    const filePath = path.join(ctx.packDir, file)
+  for (const file of fs.readdirSync(targetDir).filter((f) => f.endsWith('.ts'))) {
+    const filePath = path.join(targetDir, file)
     const src = fs.readFileSync(filePath, 'utf8')
     const idMatch = src.match(/\bid:\s*'([^']+)'/)
     if (!idMatch) continue
     const id = idMatch[1]
     const usingOverride = Object.prototype.hasOwnProperty.call(overrides, id)
     const model = usingOverride ? overrides[id] : preset[manifest[id]]
-    if (!model) continue
+    if (typeof model !== 'string' || model.trim().length === 0) {
+      throw new Error(`no valid model resolved for agent "${id}"`)
+    }
     const next = src.replace(/^(\s*model:\s*)'[^']*'/m, `$1'${model}'`)
     if (next !== src) {
-      fs.writeFileSync(filePath, next)
-      changed++
+      edits.push({ filePath, next })
       if (usingOverride) overridden++
     }
   }
+  for (const { filePath, next } of edits) fs.writeFileSync(filePath, next)
+  return { models, preset, changed: edits.length, overridden }
+}
+
+function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
+  requireInstalled(ctx)
+  const cfg = loadConfig(ctx)
+  let result
+  try {
+    result = applyPresetToDir(ctx, ctx.packDir, name, cfg)
+  } catch (e) {
+    err(paint(c.red, e.message))
+    process.exit(1)
+  }
   if (writeConfig) setConfigValue(ctx, 'modelPreset', name)
   if (!quiet) {
+    const { models, preset, changed, overridden } = result
     log(paint(c.green, `✓ Applied '${name}' preset`) + paint(c.dim, ` (${preset.description || ''})`))
     log(`  ${paint(c.dim, 'updated:')} ${changed} agent files in ${ctx.packDir}`)
     if (overridden) log(`  ${paint(c.dim, 'overrides:')} ${overridden} agent(s) pinned via modelOverrides`)
-    for (const t of models.tiers) if (preset[t]) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
+    for (const t of models.tiers) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
   }
 }
 
 function cmdPreset(ctx, opts) {
   const name = opts._[0]
-  const { models, presets } = loadRouting(ctx)
+  const cfg = loadConfig(ctx)
+  const { models, presets } = loadRouting(ctx, cfg)
   if (!name) {
-    const current = getConfigValue(ctx, 'modelPreset') || models.defaultPreset
+    const current = cfg.modelPreset || models.defaultPreset
     const builtin = new Set(Object.keys(models.presets))
     log(paint(c.bold, 'Model presets') + paint(c.dim, `  (current: ${current})`))
     log('')
@@ -264,6 +397,7 @@ function cmdPreset(ctx, opts) {
     }
     log('')
     log(paint(c.dim, 'Apply with:  omf preset <name>'))
+    log(paint(c.dim, 'Custom presets inherit balanced by default; use "extends" to choose another base.'))
     log(paint(c.dim, 'Define custom presets or per-agent pins in config: customPresets / modelOverrides'))
     return
   }
@@ -316,6 +450,8 @@ function cmdSetup(ctx, opts) {
     setConfigValue(ctx, 'notifications', {})
     log(paint(c.green, `✓ wrote ${ctx.configFile}`))
   } else {
+    // Parse it now so setup does not report success with a broken existing file.
+    loadConfig(ctx)
     log(paint(c.dim, `✓ config exists: ${ctx.configFile}`))
   }
 
@@ -436,6 +572,10 @@ Steps the agent follows when this skill applies:
 
 // ---- notifications ----------------------------------------------------------
 
+function isEnvRef(value) {
+  return /^\$\{\w+\}$/.test(value) || /^env:\w+$/.test(value)
+}
+
 async function cmdNotify(ctx, opts) {
   const [sub, ...rest] = opts._
   switch (sub) {
@@ -461,6 +601,7 @@ async function cmdNotify(ctx, opts) {
         setConfigValue(ctx, 'notifications.telegram.chatId', rest[2])
       } else if (channel === 'discord' || channel === 'slack') {
         if (!rest[1]) return usageExit(`omf notify setup ${channel} <webhook-url>`)
+        if (!isEnvRef(rest[1])) validateWebhookUrl(channel, rest[1])
         setConfigValue(ctx, `notifications.${channel}.webhook`, rest[1])
       } else {
         err(paint(c.red, `Unknown channel: ${channel}`))
@@ -518,6 +659,14 @@ function cmdDoctor(ctx) {
   const cli = which('freebuff') || which('codebuff') || which('cb')
   check('Freebuff or Codebuff CLI on PATH', !!cli, cli || 'npm i -g freebuff')
 
+  let cfg = null
+  try {
+    cfg = loadConfig(ctx)
+    check('config files parse', true)
+  } catch (e) {
+    check('config files parse', false, e.message)
+  }
+
   const installed = fs.existsSync(ctx.packDir)
   check('Pack installed', installed, installed ? ctx.packDir : `run: omf install${ctx.scope === 'global' ? ' --global' : ''}`)
   if (installed) {
@@ -544,16 +693,25 @@ function cmdDoctor(ctx) {
     check('no manifest entries without an agent', orphanManifest.length === 0, orphanManifest.join(', '))
     check('every agent has a model id', emptyModels === 0, emptyModels ? `${emptyModels} missing` : '')
 
-    const preset = getConfigValue(ctx, 'modelPreset')
-    if (preset) {
-      const presetNames = new Set(Object.keys(loadRouting(ctx).presets))
-      check('model preset is defined', presetNames.has(preset), presetNames.has(preset) ? preset : `"${preset}" is not a known preset`)
+    if (cfg) {
+      try {
+        const { presets } = loadRouting(ctx, cfg)
+        check('custom preset inheritance resolves', true)
+        const preset = cfg.modelPreset
+        if (preset) check('model preset is defined', !!presets[preset], presets[preset] ? preset : `"${preset}" is not a known preset`)
+      } catch (e) {
+        check('custom preset inheritance resolves', false, e.message)
+      }
+      const overrides = cfg.modelOverrides || {}
+      const unknownOverrides = overrides && typeof overrides === 'object' && !Array.isArray(overrides)
+        ? Object.keys(overrides).filter((id) => !ids.has(id))
+        : ['modelOverrides must be an object']
+      check('model overrides target real agents', unknownOverrides.length === 0, unknownOverrides.join(', '))
     }
   }
 
   // Secret hygiene: if secrets live in the project config, it should be ignored.
-  if (ctx.scope !== 'global' && fs.existsSync(ctx.configFile)) {
-    const cfg = loadConfig(ctx)
+  if (cfg && ctx.scope !== 'global' && fs.existsSync(ctx.configFile)) {
     const hasSecrets = JSON.stringify(cfg.notifications || {}).match(/token|webhook|password/i)
     if (hasSecrets) {
       const ignored = isGitIgnored(ctx.root, path.relative(ctx.root, ctx.configFile) || '.freebuff/omf.jsonc')
@@ -578,7 +736,7 @@ ${paint(c.bold, 'Usage')}
 ${paint(c.bold, 'Setup')}
   ${paint(c.cyan, 'setup')}        Install pack + seed config + knowledge.md (one-shot)
   ${paint(c.cyan, 'install')}      Copy the agent pack into .agents
-  ${paint(c.cyan, 'update')}       Re-copy the pack (keeps your preset)
+  ${paint(c.cyan, 'update')}       Atomically refresh the pack (keeps your preset)
   ${paint(c.cyan, 'uninstall')}    Remove the pack
   ${paint(c.cyan, 'doctor')}       Check your setup
 

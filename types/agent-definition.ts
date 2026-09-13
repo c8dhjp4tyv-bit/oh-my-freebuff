@@ -63,6 +63,14 @@ export interface AgentInputSchema {
   params?: Record<string, unknown>
 }
 
+export type StepText = { type: 'STEP_TEXT'; text: string }
+export type GenerateN = { type: 'GENERATE_N'; n: number }
+export type HandleStepToolCall = {
+  toolName: string
+  input: Record<string, unknown>
+  includeToolCall?: boolean
+}
+
 export interface AgentDefinition {
   /** Unique id: lowercase letters, numbers and hyphens only, e.g. 'code-reviewer'. */
   id: string
@@ -104,8 +112,8 @@ export interface AgentDefinition {
   stepPrompt?: string
   /**
    * Optional generator to drive the agent programmatically. Yield tool calls,
-   * 'STEP' (one model turn) or 'STEP_ALL' (run until end_turn), or return to
-   * finish. Used by the orchestrators in this pack.
+   * 'STEP' (one model turn), 'STEP_ALL' (run until end_turn), STEP_TEXT to inject
+   * deterministic stage text, or GENERATE_N for supported runtimes.
    */
   handleSteps?: (context: {
     agentState: unknown
@@ -113,11 +121,18 @@ export interface AgentDefinition {
     params?: Record<string, unknown>
     logger: { debug: Fn; info: Fn; warn: Fn; error: Fn }
   }) => Generator<
-    | { toolName: string; input: Record<string, unknown>; includeToolCall?: boolean }
+    | HandleStepToolCall
     | 'STEP'
-    | 'STEP_ALL',
+    | 'STEP_ALL'
+    | StepText
+    | GenerateN,
     void,
-    { agentState: unknown; toolResult: unknown; stepsComplete: boolean }
+    {
+      agentState: unknown
+      toolResult: unknown
+      stepsComplete: boolean
+      nResponses?: unknown[]
+    }
   >
 }
 

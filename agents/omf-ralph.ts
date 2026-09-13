@@ -53,8 +53,9 @@ const omfRalph: AgentDefinition = {
   // Deterministic loop: when a verifyCommand is provided, the harness — not the
   // model — enforces "don't stop on a red check". EVERY time the agent tries to
   // finish we re-run the command and read its REAL exit status via an appended
-  // sentinel (not by pattern-matching output, which is why "0 failures" no longer
-  // trips a false negative). Two distinct exits, never shared:
+  // sentinel. We deliberately consume the LAST sentinel in the output, so a
+  // command printing a sentinel-looking string cannot spoof the final status.
+  // Two distinct exits, never shared:
   //   • the command exits 0 → success, end the turn.
   //   • the command still fails after maxIterations → record an explicit failure
   //     via set_output and end the turn — so an exhausted loop is never mistaken
@@ -64,7 +65,7 @@ const omfRalph: AgentDefinition = {
     const cmd = typeof params?.verifyCommand === 'string' ? params.verifyCommand.trim() : ''
     let max = Number(params?.maxIterations)
     if (!Number.isInteger(max) || max < 1) max = 8
-    const wrapped = cmd ? `${cmd}; echo "OMF_VERIFY_EXIT=$?"` : ''
+    const wrapped = cmd ? `${cmd}; code=$?; printf "\\nOMF_VERIFY_EXIT=%s\\n" "$code"` : ''
     let verifications = 0
     while (true) {
       const { stepsComplete } = yield 'STEP'
@@ -76,8 +77,9 @@ const omfRalph: AgentDefinition = {
         toolName: 'run_terminal_command',
         input: { command: wrapped },
       }
-      const m = JSON.stringify(toolResult ?? '').match(/OMF_VERIFY_EXIT=(\d+)/)
-      if (m && m[1] === '0') return // genuine exit 0 → success
+      const matches = [...JSON.stringify(toolResult ?? '').matchAll(/OMF_VERIFY_EXIT=(\d+)/g)]
+      const exit = matches.length ? matches[matches.length - 1][1] : null
+      if (exit === '0') return // genuine exit 0 → success
       if (verifications >= max) {
         // Out of attempts and still red → fail loudly, don't fall through to green.
         yield {

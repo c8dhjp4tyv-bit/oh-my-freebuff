@@ -48,10 +48,10 @@ Pick one by the shape of the task. Full guide in [docs/MODES.md](./docs/MODES.md
 | --- | --- |
 | `omf-team` | The default. Research, design, plan, implement, test, review, looping on review findings. |
 | `omf-autopilot` | A defined task, less overhead. One agent drives and calls helpers when it needs them. |
-| `omf-pipeline` | Strict sequential stages with a gate between each. When order matters. |
+| `omf-pipeline` | Strict sequential stages. The coarse research → design → plan → implement → test → review order is enforced by `handleSteps`; an optional `verifyCommand` is a deterministic final gate. |
 | `omf-ultrawork` | Many independent edits in parallel: rename everywhere, apply a rule across the repo. |
-| `omf-ultraqa` | Drive the whole quality gate (tests, typecheck, lint, build) to zero failures. |
-| `omf-ralph` | Loop on one check command until it passes. Won't report green on a red check. |
+| `omf-ultraqa` | Drive the whole quality gate to zero failures. Optional `gateCommands` are re-run by the harness on every completion attempt. |
+| `omf-ralph` | Loop on one check command. With `verifyCommand`, the harness machine-enforces exit 0 before success. |
 | `omf-ralplan` | Generate competing plans, critique them against each other, merge into one. |
 | `omf-advisor` | A second opinion: the same question sent to three different models, reconciled. |
 | `omf-deep-interview` | Turn a vague request into a spec with a few pointed questions. |
@@ -69,7 +69,7 @@ Orchestrators spawn these. You can also call one directly for a focused job.
 | `planner` | Turn a goal into an ordered, checkable task list. |
 | `implementer` | Write the code for one scoped task. |
 | `refactorer` | Restructure without changing behavior, checked against tests. |
-| `reviewer` | Review a change for correctness; reports, doesn't edit. |
+| `reviewer` | Capability-level read-only review: no edit tools and no unrestricted terminal. |
 | `security-reviewer` | Look for exploitable issues with concrete attack scenarios. |
 | `critic` | Push back on the approach, not the syntax. |
 | `tester` | Write and run tests, report the real result. |
@@ -92,8 +92,26 @@ omf preset premium     # Claude / GPT / Gemini, most expensive
 
 `omf preset` rewrites each installed agent's `model:` line by tier and records
 the choice, so `install` and `update` re-apply it. The tier→model table lives in
-[docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md). Every agent is a
-plain file, so you can also set one model by hand.
+[docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md).
+
+Custom presets are partial overlays: omitted tiers inherit from `balanced` by
+default, or from an explicit `extends` preset. That prevents mixed old/new model
+state when a custom preset only overrides one tier:
+
+```jsonc
+{
+  "customPresets": {
+    "my-premium": {
+      "extends": "premium",
+      "strong": "some-provider/some-model"
+    }
+  }
+}
+```
+
+Per-agent `modelOverrides` still win over the selected preset. Unknown override
+agent ids and broken/cyclic preset inheritance are rejected instead of silently
+being ignored.
 
 ## CLI
 
@@ -101,9 +119,9 @@ plain file, so you can also set one model by hand.
 Setup
   omf setup                 Install, write config, add a knowledge.md stub
   omf install               Copy the pack into ./.agents
-  omf update                Re-copy the pack (keeps your preset)
+  omf update                Atomically refresh the pack (keeps your preset)
   omf uninstall             Remove the pack
-  omf doctor                Check the setup
+  omf doctor                Check setup, config parsing and routing integrity
 
 Agents & models
   omf list                  List the agents
@@ -116,7 +134,7 @@ Config
 
 Skills
   omf skill list            List skills
-  omf skill add <name>      Scaffold a skill
+  omf skill add <name>      Scaffold a new skill
   omf skill remove <name>   Delete a skill
   omf skill search <q>      Search skills
 
@@ -145,8 +163,15 @@ omf notify test
 ```
 
 Passing the value directly also works (`omf notify setup slack <url>`), but it
-lands in your shell history. Channels: Telegram, Discord, Slack, and a local
-file. Secrets are stored `0600` and redacted in `omf config`. Messages support
+lands in your shell history. Literal Slack/Discord URLs are validated at setup,
+and environment-backed URLs are validated when sent. Only HTTPS provider webhook
+hosts/paths are accepted.
+
+The file notification channel is project-root confined by default, including
+symlink checks. If you intentionally need to write outside the project, opt in
+explicitly with `allowExternalNotificationFile: true` in config.
+
+Secrets are stored `0600` and redacted in `omf config`. Messages support
 `{{projectName}}` and other variables.
 
 ## Skills
@@ -172,9 +197,12 @@ Config lives in `.freebuff/omf.jsonc` (project) or `~/.config/freebuff-omf/confi
 
 - `omf config` redacts them by default; pass `--show-secrets` to reveal.
 - Config files are written with `0600` permissions.
+- Existing config is parsed strictly: malformed JSONC is reported, not silently
+  replaced with an empty effective config.
 - A value can reference the environment instead of storing the secret inline:
   `omf notify setup slack '${SLACK_WEBHOOK}'`.
-- `omf doctor` warns if a project config holding secrets isn't git-ignored.
+- `omf doctor` warns if a project config holding secrets isn't git-ignored and
+  reports malformed config/routing errors as failed checks.
 
 ## How orchestration works
 
@@ -193,6 +221,14 @@ omf-team
   └─ reviewer                   must-fix loop, then done
 ```
 
+`omf-ralph`, `omf-ultraqa`, and `omf-pipeline` also use programmatic
+`handleSteps` logic for guarantees that should not depend only on prompt
+obedience. Ralph re-runs a real command before allowing success when
+`verifyCommand` is supplied; UltraQA does the same for `gateCommands`. Without
+those explicit parameters, their discovered-check loops remain prompt-driven.
+Pipeline always enforces its coarse stage order and can optionally enforce a
+final `verifyCommand`.
+
 ## What goes where
 
 After install:
@@ -205,18 +241,20 @@ After install:
 ## Customize
 
 - Change a model durably: set `modelOverrides` (per agent) or `customPresets` in
-  `.freebuff/omf.jsonc` — these survive `install`/`update`/`preset`. See
-  [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md). Editing an agent
-  file's `model:` line works too but is overwritten by the next `omf preset`.
+  `.freebuff/omf.jsonc` — these survive `install`/`update`/`preset`. Custom
+  presets inherit `balanced` unless `extends` says otherwise. See
+  [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md).
 - Change behavior: edit the agent's `instructionsPrompt`.
 - Add an agent: drop a `.ts` file that exports an `AgentDefinition` and add its
   id to an orchestrator's `spawnableAgents`.
 
-> **Note on `omf update`:** it replaces the files in `.agents/oh-my-freebuff/`,
-> so edits made directly to installed pack agents are overwritten. Keep durable
-> changes in `agents.manifest.json` / `models.json`, or copy an agent to a new
-> id. Your **skills** are safe — `update` and `uninstall` only touch skills the
-> pack installed and you haven't modified (tracked in `.freebuff/omf-managed.json`).
+> **Note on `omf update`:** the namespaced pack replacement is staged first and
+> swapped into place atomically. Invalid config/routing or a staging failure does
+> not delete the working pack. A successful update still replaces direct edits
+> made under `.agents/oh-my-freebuff/`; keep durable routing changes in config or
+> copy an agent to a new id. Your **skills** are safe — `update` and `uninstall`
+> only touch skills the pack installed and you haven't modified (tracked in
+> `.freebuff/omf-managed.json`).
 
 ## Requirements
 
@@ -230,6 +268,10 @@ npm install       # dev only: TypeScript for typechecking
 npm run typecheck
 npm test
 ```
+
+Normal CI smoke-tests a pinned known-good Codebuff SDK. A separate scheduled
+canary runs weekly against `@codebuff/sdk@latest`, so upstream runtime breakage is
+caught even when this repository has no new commits.
 
 ## Docs
 
