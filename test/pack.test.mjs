@@ -59,18 +59,38 @@ test('CLI JS entrypoints are syntactically valid', () => {
   }
 })
 
-test('read-only review agents have no mutating tools', () => {
+test('read-only review agents have no mutation-capable terminal or edit tools', () => {
   const cases = [
     ['security-reviewer.ts', ['write_file', 'str_replace', 'run_terminal_command']],
     ['critic.ts', ['write_file', 'str_replace', 'run_terminal_command']],
-    ['reviewer.ts', ['write_file', 'str_replace']], // reviewer keeps terminal for inspection only
+    ['reviewer.ts', ['write_file', 'str_replace', 'run_terminal_command']],
   ]
   for (const [file, forbidden] of cases) {
     const tools = arrayField(fs.readFileSync(path.join(AGENTS_DIR, file), 'utf8'), 'toolNames') || []
     for (const t of forbidden) {
-      assert.ok(!tools.includes(t), `${file} must not have the mutating tool "${t}"`)
+      assert.ok(!tools.includes(t), `${file} must not have the mutation-capable tool "${t}"`)
     }
   }
+})
+
+test('harness-backed orchestration modes keep programmatic gates in code', () => {
+  const ralph = fs.readFileSync(path.join(AGENTS_DIR, 'omf-ralph.ts'), 'utf8')
+  const ultraqa = fs.readFileSync(path.join(AGENTS_DIR, 'omf-ultraqa.ts'), 'utf8')
+  const pipeline = fs.readFileSync(path.join(AGENTS_DIR, 'omf-pipeline.ts'), 'utf8')
+  assert.match(ralph, /handleSteps:/)
+  assert.match(ralph, /OMF_VERIFY_EXIT/)
+  assert.match(ultraqa, /handleSteps:/)
+  assert.match(ultraqa, /gateCommands/)
+  assert.match(ultraqa, /OMF_ULTRAQA_EXIT_/)
+  assert.match(pipeline, /handleSteps:/)
+  assert.match(pipeline, /PIPELINE STAGE 4\/6/)
+  assert.match(pipeline, /OMF_PIPELINE_VERIFY_EXIT/)
+})
+
+test('local type shim supports STEP_TEXT used by programmatic orchestrators', () => {
+  const types = fs.readFileSync(path.join(ROOT, 'types', 'agent-definition.ts'), 'utf8')
+  assert.match(types, /type StepText = \{ type: 'STEP_TEXT'/)
+  assert.match(types, /\| StepText/)
 })
 
 test('specialists expose a spawnerPrompt for composability', () => {
