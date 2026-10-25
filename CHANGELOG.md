@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions follow
 [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Freebuff installs now default to `/skill:omf-workflow` without loadable OMF
+  agents. `omf update` migrates an existing installation to this mode. Freebuff
+  free sessions allow only first-party agent/model pairs, so selecting a custom
+  OMF agent can fail even though it passes local SDK validation.
+- `omf install --agents` or `omf update --agents` retains the full multi-agent
+  pack for Codebuff or a configured BYOK connection. `omf doctor` reports the
+  install mode and warns when full agents may be incompatible with free sessions.
+
+### Added
+
+- A Freebuff-compatible workflow skill and a smoke test asserting that the
+  default install exposes the skill while loading zero custom agents.
+
 ## [0.3.0]
 
 Reliability and deterministic-orchestration release.

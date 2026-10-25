@@ -1,5 +1,12 @@
 # Model routing & compatibility
 
+Model routing applies to the optional `omf install --agents` mode. The default
+Freebuff skill-only install keeps the model chosen in Freebuff's picker and
+does not load custom agent definitions. Freebuff's free sessions only admit
+first-party agent/model combinations, so changing an OMF preset cannot make a
+custom agent eligible for free inference. Use Codebuff or a configured BYOK
+connection for the full agent pack.
+
 Every agent is assigned a **tier**, and each **preset** maps tiers to concrete
 [OpenRouter model ids](https://openrouter.ai/models). This keeps cost sane: cheap
 models do search and simple edits; strong models do design, review and hard

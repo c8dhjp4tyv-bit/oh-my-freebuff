@@ -40,6 +40,8 @@ function parseArgs(argv) {
     const a = argv[i]
     if (a === '--global' || a === '-g') opts.global = true
     else if (a === '--force' || a === '-f') opts.force = true
+    else if (a === '--agents') opts.agents = true
+    else if (a === '--skill-only') opts.skillOnly = true
     else if (a === '--show-secrets') opts.showSecrets = true
     else if (a === '--dir' || a === '-d') {
       const val = argv[++i]
@@ -126,6 +128,10 @@ function swapPackDir(ctx, staged) {
 }
 
 function cmdInstall(ctx, opts) {
+  if (opts.agents && opts.skillOnly) throw new Error('--agents and --skill-only cannot be used together')
+  // Freebuff's sponsored/free sessions only admit first-party agent/model pairs.
+  // Local OMF agents are therefore opt-in for Codebuff or a BYOK connection.
+  const installAgents = opts.agents === true
   if (fs.existsSync(ctx.packDir) && !opts.force) {
     err(paint(c.yellow, `! ${PACK_NAME} is already installed at ${ctx.packDir}`))
     err(paint(c.dim, '  Re-run with --force to overwrite (or: omf update).'))
@@ -144,6 +150,12 @@ function cmdInstall(ctx, opts) {
     // "balanced": users may refine the built-in balanced preset in
     // customPresets, and overrides must be validated on every install/update.
     applyPresetToDir(ctx, staged, preset || 'balanced', cfg)
+    if (!installAgents) {
+      for (const file of fs.readdirSync(staged).filter((f) => f.endsWith('.ts'))) {
+        fs.rmSync(path.join(staged, file))
+      }
+    }
+    fs.writeFileSync(path.join(staged, 'install-mode.json'), JSON.stringify({ mode: installAgents ? 'agents' : 'skill-only' }) + '\n')
     swapPackDir(ctx, staged)
   } catch (e) {
     fs.rmSync(staged, { recursive: true, force: true })
@@ -194,13 +206,17 @@ function cmdInstall(ctx, opts) {
   writeReceipt(ctx, receipt)
 
   log(paint(c.green, `✓ Installed ${PACK_NAME} v${version()}`))
-  log(`  ${paint(c.dim, 'agents:')}   ${listPackAgents().length}  → ${ctx.packDir}`)
+  log(`  ${paint(c.dim, 'mode:')}     ${installAgents ? 'Codebuff/BYOK agents' : 'Freebuff skill-only'}`)
+  log(`  ${paint(c.dim, 'agents:')}   ${installAgents ? listPackAgents().length : 0}  → ${ctx.packDir}`)
   log(`  ${paint(c.dim, 'types:')}    ${typesNote}`)
   log(`  ${paint(c.dim, 'skills:')}   ${skillsAdded} added${skillsUpdated ? `, ${skillsUpdated} updated` : ''}${skillsKept ? `, ${skillsKept} kept (yours)` : ''}  → ${ctx.skillsDir}`)
   if (preset) log(`  ${paint(c.dim, 'preset:')}   ${preset}`)
   log('')
-  log('Next: run Freebuff in this project and pick an orchestrator, e.g.')
-  log(paint(c.cyan, '  freebuff') + paint(c.dim, '   then: "use omf-team to <your task>"'))
+  if (installAgents) {
+    log('Next: use omf-team in Codebuff or with a configured BYOK connection.')
+  } else {
+    log('Next: run Freebuff and use /skill:omf-workflow for a staged workflow.')
+  }
 }
 
 function cmdUninstall(ctx) {
@@ -365,8 +381,15 @@ function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
   requireInstalled(ctx)
   const cfg = loadConfig(ctx)
   let result
+  const agentFiles = fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))
   try {
-    result = applyPresetToDir(ctx, ctx.packDir, name, cfg)
+    if (agentFiles.length) {
+      result = applyPresetToDir(ctx, ctx.packDir, name, cfg)
+    } else {
+      const { models, presets } = loadRouting(ctx, cfg)
+      if (!presets[name]) throw new Error(`Unknown preset: ${name}`)
+      result = { models, preset: presets[name], changed: 0, overridden: 0 }
+    }
   } catch (e) {
     err(paint(c.red, e.message))
     process.exit(1)
@@ -376,6 +399,7 @@ function applyPreset(ctx, name, { quiet = false, writeConfig = true } = {}) {
     const { models, preset, changed, overridden } = result
     log(paint(c.green, `✓ Applied '${name}' preset`) + paint(c.dim, ` (${preset.description || ''})`))
     log(`  ${paint(c.dim, 'updated:')} ${changed} agent files in ${ctx.packDir}`)
+    if (!agentFiles.length) log(paint(c.dim, '  Skill-only mode: preset saved for a future --agents install.'))
     if (overridden) log(`  ${paint(c.dim, 'overrides:')} ${overridden} agent(s) pinned via modelOverrides`)
     for (const t of models.tiers) log(`  ${paint(c.dim, t.padEnd(9))} ${preset[t]}`)
   }
@@ -442,7 +466,10 @@ function stripSources(cfg) {
 function cmdSetup(ctx, opts) {
   log(paint(c.bold, 'oh-my-freebuff setup'))
   log('')
-  if (!fs.existsSync(ctx.packDir)) cmdInstall(ctx, opts)
+  const hasAgents = fs.existsSync(ctx.packDir) && fs.readdirSync(ctx.packDir).some((f) => f.endsWith('.ts'))
+  if (!fs.existsSync(ctx.packDir) || hasAgents !== Boolean(opts.agents)) {
+    cmdInstall(ctx, { ...opts, force: true })
+  }
   else log(paint(c.dim, `✓ pack already installed at ${ctx.packDir}`))
 
   if (!fs.existsSync(ctx.configFile)) {
@@ -459,13 +486,13 @@ function cmdSetup(ctx, opts) {
   const knowledgeSrc = path.join(PACK_ROOT, 'templates', 'knowledge.md')
   if (!fs.existsSync(knowledgeDest) && fs.existsSync(knowledgeSrc)) {
     fs.copyFileSync(knowledgeSrc, knowledgeDest)
-    log(paint(c.green, `✓ created ${knowledgeDest}`) + paint(c.dim, ' (fill it in — every agent reads it)'))
+    log(paint(c.green, `✓ created ${knowledgeDest}`) + paint(c.dim, ' (optional project notes)'))
   } else {
     log(paint(c.dim, '✓ knowledge file present or template missing'))
   }
   log('')
-  log(paint(c.bold, 'Ready.') + ' Try: ' + paint(c.cyan, 'freebuff') + paint(c.dim, '  then "use omf-team to <task>"'))
-  log(paint(c.dim, 'Pick a cost tier with:  omf preset budget|balanced|premium'))
+  log(paint(c.bold, 'Ready.') + ' Try: ' + paint(c.cyan, 'freebuff') + paint(c.dim, opts.agents ? '  then "use omf-team to <task>" (BYOK/Codebuff)' : '  then /skill:omf-workflow'))
+  if (opts.agents) log(paint(c.dim, 'Pick a cost tier with:  omf preset budget|balanced|premium'))
 }
 
 // ---- skills -----------------------------------------------------------------
@@ -672,7 +699,8 @@ function cmdDoctor(ctx) {
   if (installed) {
     check('types/agent-definition present', fs.existsSync(ctx.typesFile), fs.existsSync(ctx.typesFile) ? '' : 'run: omf update')
     const agentFiles = fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))
-    check('agent files present', agentFiles.length > 0, `${agentFiles.length} agents`)
+    const mode = readJsoncSafe(path.join(ctx.packDir, 'install-mode.json'), {}).mode || (agentFiles.length ? 'agents' : 'skill-only')
+    check('install mode matches agent files', mode === (agentFiles.length ? 'agents' : 'skill-only'), mode)
     const skills = fs.existsSync(ctx.skillsDir) ? fs.readdirSync(ctx.skillsDir).filter((n) => fs.existsSync(path.join(ctx.skillsDir, n, 'SKILL.md'))).length : 0
     check('skills discoverable (.agents/skills/*/SKILL.md)', skills > 0, `${skills} skill(s)`)
 
@@ -689,7 +717,7 @@ function cmdDoctor(ctx) {
     }
     const noTier = [...ids.keys()].filter((id) => !manifest[id])
     check('every agent has a manifest tier', noTier.length === 0, noTier.join(', '))
-    const orphanManifest = Object.keys(manifest).filter((id) => !ids.has(id))
+    const orphanManifest = agentFiles.length ? Object.keys(manifest).filter((id) => !ids.has(id)) : []
     check('no manifest entries without an agent', orphanManifest.length === 0, orphanManifest.join(', '))
     check('every agent has a model id', emptyModels === 0, emptyModels ? `${emptyModels} missing` : '')
 
@@ -704,9 +732,12 @@ function cmdDoctor(ctx) {
       }
       const overrides = cfg.modelOverrides || {}
       const unknownOverrides = overrides && typeof overrides === 'object' && !Array.isArray(overrides)
-        ? Object.keys(overrides).filter((id) => !ids.has(id))
+        ? Object.keys(overrides).filter((id) => !manifest[id])
         : ['modelOverrides must be an object']
       check('model overrides target real agents', unknownOverrides.length === 0, unknownOverrides.join(', '))
+    }
+    if (mode === 'agents' && cli?.includes('freebuff')) {
+      warn('Custom OMF agents need Codebuff credits or BYOK', 'Freebuff free sessions only allow first-party agents; run omf update --skill-only for /skill:omf-workflow')
     }
   }
 
@@ -735,8 +766,8 @@ ${paint(c.bold, 'Usage')}
 
 ${paint(c.bold, 'Setup')}
   ${paint(c.cyan, 'setup')}        Install pack + seed config + knowledge.md (one-shot)
-  ${paint(c.cyan, 'install')}      Copy the agent pack into .agents
-  ${paint(c.cyan, 'update')}       Atomically refresh the pack (keeps your preset)
+  ${paint(c.cyan, 'install')}      Install the Freebuff-compatible workflow skill
+  ${paint(c.cyan, 'update')}       Refresh and migrate old agent installs to skill-only
   ${paint(c.cyan, 'uninstall')}    Remove the pack
   ${paint(c.cyan, 'doctor')}       Check your setup
 
@@ -764,6 +795,8 @@ ${paint(c.bold, 'Options')}
   -g, --global       Target ~/.agents and user-scope config
   -d, --dir <path>   Operate on <path> (its .agents and .freebuff)
   -f, --force        Overwrite an existing install
+      --agents       Load all custom agents (Codebuff or BYOK only)
+      --skill-only   Explicitly use Freebuff-compatible skill mode (default)
       --show-secrets Reveal secrets in "config" output`)
 }
 
