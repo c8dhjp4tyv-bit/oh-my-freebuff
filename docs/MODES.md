@@ -1,8 +1,10 @@
 # Orchestration modes
 
-oh-my-freebuff ships several orchestrator agents. Each is an entry point you
-invoke by name inside Freebuff/Codebuff ("use `omf-team` to …"). They coordinate
-the specialist agents for you.
+The orchestrator agents below require `omf install --agents` and a Codebuff or
+BYOK connection. They cannot run in Freebuff's free sessions, which only admit
+first-party agent/model pairs. The default install provides
+`/skill:omf-workflow` for those sessions; it follows a staged workflow using
+the current Freebuff agent.
 
 Pick by shape of the task:
 

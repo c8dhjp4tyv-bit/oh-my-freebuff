@@ -22,12 +22,40 @@ afterEach(() => {
 
 /** Run `omf ...args` with `cwd` (defaults to the fixture dir). */
 function omf(args, cwd = dir) {
+  // Existing agent-mode cases explicitly opt in; new default cases use omfDefault.
+  const withMode = ['install', 'update', 'setup'].includes(args[0]) && !args.includes('--skill-only')
+    ? [...args, '--agents'] : args
+  return omfDefault(withMode, cwd)
+}
+
+function omfDefault(args, cwd = dir) {
   return spawnSync('node', [OMF, ...args], {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, NO_COLOR: '1' },
   })
 }
+
+test('default install exposes a workflow skill without loadable OMF agents', () => {
+  const res = omfDefault(['install'])
+  assert.equal(res.status, 0, res.stderr)
+  assert.match(res.stdout, /Freebuff skill-only/)
+  assert.ok(fs.existsSync(path.join(dir, '.agents', 'skills', 'omf-workflow', 'SKILL.md')))
+  const pack = path.join(dir, '.agents', 'oh-my-freebuff')
+  assert.equal(fs.readdirSync(pack).filter((f) => f.endsWith('.ts')).length, 0)
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pack, 'install-mode.json'))), { mode: 'skill-only' })
+})
+
+test('default update migrates an old agent install; explicit --agents restores it', () => {
+  assert.equal(omf(['install']).status, 0)
+  const pack = path.join(dir, '.agents', 'oh-my-freebuff')
+  assert.ok(fs.existsSync(path.join(pack, 'omf-team.ts')))
+  assert.equal(omfDefault(['update']).status, 0)
+  assert.equal(fs.readdirSync(pack).filter((f) => f.endsWith('.ts')).length, 0)
+  assert.match(omfDefault(['doctor']).stdout, /install mode matches agent files/)
+  assert.equal(omf(['update']).status, 0)
+  assert.ok(fs.existsSync(path.join(pack, 'omf-team.ts')))
+})
 
 test('install places skills at .agents/skills/<name>/SKILL.md (Codebuff-native)', () => {
   assert.equal(omf(['install']).status, 0)

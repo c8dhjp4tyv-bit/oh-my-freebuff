@@ -5,23 +5,23 @@
 [![node](https://img.shields.io/node/v/oh-my-freebuff)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-Multi-agent orchestration for [Freebuff](https://freebuff.com) and
-[Codebuff](https://codebuff.com). It's a pack of agents you drop into a project's
-`.agents` folder: a set of specialists (researcher, implementer, reviewer, and so
-on) plus orchestrators that coordinate them through a research → plan → build →
-review pipeline. Inspired by
+Workflow skills for [Freebuff](https://freebuff.com), with an optional
+multi-agent pack for [Codebuff](https://codebuff.com) or a BYOK connection.
+The full pack includes specialists and orchestrators for a research → plan →
+build → review pipeline. Inspired by
 [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode), built for
 the Codebuff agent runtime.
 
-Freebuff is a free coding agent built on Codebuff, and Codebuff loads agent
-definitions from a `.agents/` directory. This pack uses that to give you a team
-of agents instead of one, with model routing that keeps cheap models on search
-and simple edits and saves the strong models for design, review, and debugging.
+Freebuff's free sessions accept only its first-party agent/model pairs. OMF's
+custom agents cannot run under that server policy. The default install places
+`/skill:omf-workflow` in `.agents/skills/` and no executable OMF agent files
+in `.agents/oh-my-freebuff/`. A Freebuff base agent can follow the workflow
+without changing its model. Full multi-agent routing remains opt-in.
 
 ## Install
 
 ```bash
-npx oh-my-freebuff install     # copy the pack into ./.agents
+npx oh-my-freebuff install     # Freebuff-safe skill-only install
 ```
 
 Or install the CLI:
@@ -31,14 +31,16 @@ npm i -g oh-my-freebuff
 omf setup                      # install + write config + a knowledge.md stub
 ```
 
-Run Freebuff in the project and call an orchestrator by name:
+Run Freebuff in the project and invoke the workflow skill:
 
 ```
 freebuff
-> use omf-team to add pagination to the users API and cover it with tests
+> /skill:omf-workflow add pagination to the users API and cover it with tests
 ```
 
-`omf doctor` checks your setup.
+`omf update` migrates earlier full-agent installs to skill-only. To opt into
+custom agents with Codebuff or BYOK, run `omf update --agents`, then call
+`omf-team` as before. `omf doctor` checks your setup.
 
 ## Orchestrators
 
@@ -80,7 +82,7 @@ Orchestrators spawn these. You can also call one directly for a focused job.
 
 ## Model presets
 
-Each agent has a tier. A preset maps tiers to real
+In `--agents` mode, each agent has a tier. A preset maps tiers to real
 [OpenRouter models](https://openrouter.ai/models). Switch the whole pack's cost
 profile in one command:
 
@@ -93,6 +95,7 @@ omf preset premium     # Claude / GPT / Gemini, most expensive
 `omf preset` rewrites each installed agent's `model:` line by tier and records
 the choice, so `install` and `update` re-apply it. The tier→model table lives in
 [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md).
+In skill-only mode the preset is saved but no agent model is changed.
 
 Custom presets are partial overlays: omitted tiers inherit from `balanced` by
 default, or from an explicit `extends` preset. That prevents mixed old/new model
@@ -117,9 +120,10 @@ being ignored.
 
 ```
 Setup
-  omf setup                 Install, write config, add a knowledge.md stub
-  omf install               Copy the pack into ./.agents
-  omf update                Atomically refresh the pack (keeps your preset)
+  omf setup                 Install skill, write config, add a knowledge.md stub
+  omf install               Install the Freebuff-compatible workflow skill
+  omf update                Refresh and migrate previous installs to skill-only
+  omf update --agents       Enable custom agents for Codebuff or BYOK
   omf uninstall             Remove the pack
   omf doctor                Check setup, config parsing and routing integrity
 
@@ -206,7 +210,7 @@ Config lives in `.freebuff/omf.jsonc` (project) or `~/.config/freebuff-omf/confi
 
 ## How orchestration works
 
-Orchestrators spawn specialists with Codebuff's `spawn_agents` tool. Each
+In `--agents` mode, orchestrators spawn specialists with Codebuff's `spawn_agents` tool. Each
 specialist starts with only the brief it's handed, so the orchestrator passes
 down the files, constraints, and definition of done. Independent work runs in
 parallel; edits to the same file are serialized.
@@ -231,16 +235,18 @@ final `verifyCommand`.
 
 ## What goes where
 
-After install:
+After the default install:
 
-- **Pack agents** live under `.agents/oh-my-freebuff/` (fully owned by the pack).
-- **Skills** install to the shared `.agents/skills/<name>/SKILL.md`.
+- **The workflow skill** lives under `.agents/skills/omf-workflow/SKILL.md`.
+- **The pack directory** `.agents/oh-my-freebuff/` holds metadata only. It has
+  no loadable agent files until you opt in with `--agents`.
+- **Other skills** install to the shared `.agents/skills/<name>/SKILL.md`.
 - **The type shim** goes to `.agents/types/agent-definition.ts` — only if you
   don't already have one; an existing (or Codebuff-generated) one is left alone.
 
 ## Customize
 
-- Change a model durably: set `modelOverrides` (per agent) or `customPresets` in
+- In `--agents` mode, change a model durably: set `modelOverrides` (per agent) or `customPresets` in
   `.freebuff/omf.jsonc` — these survive `install`/`update`/`preset`. Custom
   presets inherit `balanced` unless `extends` says otherwise. See
   [docs/MODEL-COMPATIBILITY.md](./docs/MODEL-COMPATIBILITY.md).
@@ -250,7 +256,8 @@ After install:
 
 > **Note on `omf update`:** the namespaced pack replacement is staged first and
 > swapped into place atomically. Invalid config/routing or a staging failure does
-> not delete the working pack. A successful update still replaces direct edits
+> not delete the working pack. By default it removes the old custom agents from
+> the live `.agents` directory. A successful update still replaces direct edits
 > made under `.agents/oh-my-freebuff/`; keep durable routing changes in config or
 > copy an agent to a new id. Your **skills** are safe — `update` and `uninstall`
 > only touch skills the pack installed and you haven't modified (tracked in
@@ -269,7 +276,7 @@ npm run typecheck
 npm test
 ```
 
-Normal CI smoke-tests a pinned known-good Codebuff SDK. A separate scheduled
+Normal CI smoke-tests the optional agent mode against a pinned Codebuff SDK. A separate scheduled
 canary runs weekly against `@codebuff/sdk@latest`, so upstream runtime breakage is
 caught even when this repository has no new commits.
 

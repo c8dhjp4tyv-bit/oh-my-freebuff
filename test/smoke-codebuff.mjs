@@ -44,10 +44,27 @@ const skipIfNoSdk = { skip: sdk ? false : '@codebuff/sdk not installed (run: npm
 
 function freshInstall() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-smoke-'))
-  const res = spawnSync('node', [OMF, 'install', '--dir', dir], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } })
+  const res = spawnSync('node', [OMF, 'install', '--agents', '--dir', dir], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } })
   assert.equal(res.status, 0, res.stderr)
   return dir
 }
+
+test('default Freebuff install contributes a skill but no custom agent definitions', skipIfNoSdk, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-freebuff-smoke-'))
+  try {
+    const res = spawnSync('node', [OMF, 'install', '--dir', dir], { encoding: 'utf8' })
+    assert.equal(res.status, 0, res.stderr)
+    const { agents, validationErrors } = await sdk.loadLocalAgents({
+      agentsPath: path.join(dir, '.agents'), validate: true,
+    })
+    assert.deepEqual(validationErrors, [])
+    assert.equal(Object.keys(agents).length, 0)
+    const skills = await sdk.loadSkills({ cwd: dir })
+    assert.ok(skills['omf-workflow'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('Codebuff loadLocalAgents loads every pack agent with no validation errors', skipIfNoSdk, async () => {
   const dir = freshInstall()
