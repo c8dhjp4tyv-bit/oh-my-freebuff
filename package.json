@@ -51,6 +51,6 @@
   },
   "homepage": "https://github.com/c8dhjp4tyv-bit/oh-my-freebuff#readme",
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^7.0.2"
   }
 }
