@@ -28,7 +28,7 @@ Or install the CLI:
 
 ```bash
 npm i -g oh-my-freebuff
-omf setup                      # install + write config + a knowledge.md stub
+omf setup                      # install + write config + an AGENTS.md stub
 ```
 
 Run Freebuff in the project and invoke the workflow skill:
@@ -41,6 +41,15 @@ freebuff
 `omf update` migrates earlier full-agent installs to skill-only. To opt into
 custom agents with Codebuff or BYOK, run `omf update --agents`, then call
 `omf-team` as before. `omf doctor` checks your setup.
+
+Current Freebuff/Codebuff builds ask once before loading a project `.agents`
+directory that contains `.ts`/`.js` files. The default skill-only install writes
+none, so there is no prompt. With `--agents`, answer `y` at the first prompt, or
+pass `--trust-agents` (`CODEBUFF_TRUST_AGENT_DIRS=1` in CI). A global install
+in `~/.agents` needs no trust.
+
+Project notes go in `AGENTS.md` (or `CLAUDE.md`). Freebuff no longer reads
+`knowledge.md`; rename an existing one.
 
 ## Orchestrators
 
@@ -120,7 +129,7 @@ being ignored.
 
 ```
 Setup
-  omf setup                 Install skill, write config, add a knowledge.md stub
+  omf setup                 Install skill, write config, add an AGENTS.md stub
   omf install               Install the Freebuff-compatible workflow skill
   omf update                Refresh and migrate previous installs to skill-only
   omf update --agents       Enable custom agents for Codebuff or BYOK
@@ -241,8 +250,10 @@ After the default install:
 - **The pack directory** `.agents/oh-my-freebuff/` holds metadata only. It has
   no loadable agent files until you opt in with `--agents`.
 - **Other skills** install to the shared `.agents/skills/<name>/SKILL.md`.
-- **The type shim** goes to `.agents/types/agent-definition.ts` — only if you
-  don't already have one; an existing (or Codebuff-generated) one is left alone.
+- **The type shim** goes to `.agents/types/agent-definition.ts` in `--agents`
+  mode only, and only if you don't already have one; an existing (or
+  Codebuff-generated) one is left alone. A skill-only update removes an
+  unmodified OMF shim so the project needs no trust prompt.
 
 ## Customize
 

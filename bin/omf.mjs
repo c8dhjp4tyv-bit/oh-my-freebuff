@@ -2,6 +2,7 @@
 // oh-my-freebuff CLI — install and manage the agent pack for Freebuff / Codebuff.
 // Zero runtime dependencies: filesystem plumbing plus a few HTTP posts.
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -16,6 +17,7 @@ const PACK_ROOT = path.resolve(__dirname, '..')
 const log = (...a) => console.log(...a)
 const err = (...a) => console.error(...a)
 const version = () => readPackVersion(PACK_ROOT)
+const KNOWLEDGE_FILES = ['AGENTS.md', 'CLAUDE.md']
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -76,6 +78,49 @@ function requireInstalled(ctx) {
 }
 
 // ---- install / update / uninstall ------------------------------------------
+
+// sha256 of every types/agent-definition.ts this package has shipped before the
+// current one. A file matching one of these (or the current shim) is ours and
+// unmodified, so a skill-only install may remove it.
+const PREVIOUS_TYPES_SHIM_SHA256 = new Set([
+  'a2b6cebdf9282c2d012cbc3e5a164be38d3b4c90f6e4883d0872080dd8275d94',
+  'e1458d064c13db2ab122953a412a6021e2a87da5168f7746df2e93df8599c0a8',
+  '08dc1d329e34c2bab9c34e8d64244a86305e3e3e82a67af9fee83956c89887b8',
+])
+
+function isOurTypesShim(file) {
+  if (!fs.existsSync(file)) return false
+  const hash = sha256(file)
+  return hash === sha256(path.join(PACK_ROOT, 'types', 'agent-definition.ts')) || PREVIOUS_TYPES_SHIM_SHA256.has(hash)
+}
+
+/** Config dir of the Freebuff/Codebuff CLI (holds trusted-agent-dirs.json). */
+function freebuffConfigDir() {
+  const env = process.env.FREEBUFF_CONFIG_DIR
+  return env && path.isAbsolute(env) ? env : path.join(os.homedir(), '.config', 'manicode')
+}
+
+/** Files under .agents that Codebuff's loader would import (mirrors the SDK's
+ * listLocalAgentFiles rules). Any of these makes Freebuff ask for trust. */
+function listExecutableAgentFiles(dir) {
+  const out = []
+  let entries
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      if (e.name.startsWith('.') || ['node_modules', 'scripts', 'skills'].includes(e.name) || e.name.startsWith('skills-')) continue
+      out.push(...listExecutableAgentFiles(full))
+    } else if (e.isFile() && /\.(ts|tsx|js|mjs|cjs)$/i.test(e.name) && !e.name.endsWith('.d.ts') && !/[./](test|spec)\.[cm]?[tj]sx?$/.test(e.name)) {
+      out.push(full)
+    }
+  }
+  return out
+}
 
 function populatePackDir(dest) {
   fs.rmSync(dest, { recursive: true, force: true })
@@ -166,13 +211,23 @@ function cmdInstall(ctx, opts) {
   // in the npm package (hooks/notify.mjs) and is run from there.
 
   // Types are shared and Codebuff also generates them. Never clobber an existing
-  // agent-definition.ts — only seed our shim when none is present.
+  // agent-definition.ts — only seed our shim when none is present. Codebuff and
+  // Freebuff ask the user to trust a project .agents dir that contains any .ts
+  // file, so skill-only installs ship no shim and drop an unmodified copy of ours.
   let typesNote
-  if (fs.existsSync(ctx.typesFile)) {
-    typesNote = 'kept existing .agents/types'
+  if (installAgents) {
+    if (fs.existsSync(ctx.typesFile)) {
+      typesNote = 'kept existing .agents/types'
+    } else {
+      copyDir(path.join(PACK_ROOT, 'types'), path.join(ctx.agentsDir, 'types'))
+      typesNote = 'wrote .agents/types shim'
+    }
+  } else if (isOurTypesShim(ctx.typesFile)) {
+    fs.rmSync(ctx.typesFile)
+    try { fs.rmdirSync(path.dirname(ctx.typesFile)) } catch { /* not empty */ }
+    typesNote = 'removed unmodified OMF types shim (not needed in skill-only mode)'
   } else {
-    copyDir(path.join(PACK_ROOT, 'types'), path.join(ctx.agentsDir, 'types'))
-    typesNote = 'wrote .agents/types shim'
+    typesNote = fs.existsSync(ctx.typesFile) ? 'kept existing .agents/types' : 'none needed'
   }
 
   // Skills go to the shared .agents/skills/<name>/SKILL.md that Codebuff reads.
@@ -482,13 +537,18 @@ function cmdSetup(ctx, opts) {
     log(paint(c.dim, `✓ config exists: ${ctx.configFile}`))
   }
 
-  const knowledgeDest = path.join(ctx.root, 'knowledge.md')
-  const knowledgeSrc = path.join(PACK_ROOT, 'templates', 'knowledge.md')
-  if (!fs.existsSync(knowledgeDest) && fs.existsSync(knowledgeSrc)) {
-    fs.copyFileSync(knowledgeSrc, knowledgeDest)
-    log(paint(c.green, `✓ created ${knowledgeDest}`) + paint(c.dim, ' (optional project notes)'))
+  // Current Freebuff/Codebuff read AGENTS.md then CLAUDE.md; knowledge.md is
+  // no longer loaded. Never touch an existing file, only point at it.
+  const existingKnowledge = KNOWLEDGE_FILES.find((f) => fs.existsSync(path.join(ctx.root, f)))
+  const legacyKnowledge = path.join(ctx.root, 'knowledge.md')
+  if (existingKnowledge) {
+    log(paint(c.dim, `✓ ${existingKnowledge} present`))
+  } else if (fs.existsSync(legacyKnowledge)) {
+    log(paint(c.yellow, '! knowledge.md is no longer read by Freebuff/Codebuff — rename it to AGENTS.md'))
   } else {
-    log(paint(c.dim, '✓ knowledge file present or template missing'))
+    const dest = path.join(ctx.root, 'AGENTS.md')
+    fs.copyFileSync(path.join(PACK_ROOT, 'templates', 'AGENTS.md'), dest)
+    log(paint(c.green, `✓ created ${dest}`) + paint(c.dim, ' (project notes every agent reads)'))
   }
   log('')
   log(paint(c.bold, 'Ready.') + ' Try: ' + paint(c.cyan, 'freebuff') + paint(c.dim, opts.agents ? '  then "use omf-team to <task>" (BYOK/Codebuff)' : '  then /skill:omf-workflow'))
@@ -697,12 +757,33 @@ function cmdDoctor(ctx) {
   const installed = fs.existsSync(ctx.packDir)
   check('Pack installed', installed, installed ? ctx.packDir : `run: omf install${ctx.scope === 'global' ? ' --global' : ''}`)
   if (installed) {
-    check('types/agent-definition present', fs.existsSync(ctx.typesFile), fs.existsSync(ctx.typesFile) ? '' : 'run: omf update')
     const agentFiles = fs.readdirSync(ctx.packDir).filter((f) => f.endsWith('.ts'))
     const mode = readJsoncSafe(path.join(ctx.packDir, 'install-mode.json'), {}).mode || (agentFiles.length ? 'agents' : 'skill-only')
     check('install mode matches agent files', mode === (agentFiles.length ? 'agents' : 'skill-only'), mode)
+    if (mode === 'agents') {
+      check('types/agent-definition present', fs.existsSync(ctx.typesFile), fs.existsSync(ctx.typesFile) ? '' : 'run: omf update --agents')
+    }
     const skills = fs.existsSync(ctx.skillsDir) ? fs.readdirSync(ctx.skillsDir).filter((n) => fs.existsSync(path.join(ctx.skillsDir, n, 'SKILL.md'))).length : 0
     check('skills discoverable (.agents/skills/*/SKILL.md)', skills > 0, `${skills} skill(s)`)
+    const workflowSkill = path.join(ctx.skillsDir, 'omf-workflow', 'SKILL.md')
+    check('omf-workflow skill installed', fs.existsSync(workflowSkill), fs.existsSync(workflowSkill) ? '/skill:omf-workflow' : `run: omf update${ctx.scope === 'global' ? ' --global' : ''}`)
+
+    // Freebuff/Codebuff ask once before loading a project .agents dir that holds
+    // executable files (~/.agents is exempt). Explain what triggers the prompt.
+    if (ctx.scope !== 'global') {
+      const execFiles = listExecutableAgentFiles(ctx.agentsDir)
+      const rel = (f) => path.relative(ctx.root, f)
+      if (mode === 'skill-only' && execFiles.length) {
+        warn('.agents contains executable files, so Freebuff will ask to trust this repo',
+          `${execFiles.slice(0, 3).map(rel).join(', ')}${execFiles.length > 3 ? ', …' : ''}${isOurTypesShim(ctx.typesFile) ? ' — omf update removes the unused OMF types shim' : ''}`)
+      } else if (mode === 'agents' && execFiles.length) {
+        const store = readJsoncSafe(path.join(freebuffConfigDir(), 'trusted-agent-dirs.json'), {})
+        let key
+        try { key = fs.realpathSync(ctx.agentsDir) } catch { key = path.resolve(ctx.agentsDir) }
+        if (store && typeof store === 'object' && store[key]) check('.agents trusted by Freebuff/Codebuff', true, key)
+        else warn('.agents not trusted yet', 'answer y at the first freebuff/codebuff prompt, or pass --trust-agents (non-interactive: CODEBUFF_TRUST_AGENT_DIRS=1)')
+      }
+    }
 
     // Model-routing integrity: manifest ↔ agents, tiers mapped, models non-empty.
     const manifest = readJsoncSafe(path.join(ctx.packDir, 'agents.manifest.json'), {}).tiers || {}
@@ -741,6 +822,14 @@ function cmdDoctor(ctx) {
     }
   }
 
+  // Project notes: current runtimes read AGENTS.md then CLAUDE.md only.
+  if (ctx.scope !== 'global') {
+    const notes = KNOWLEDGE_FILES.find((f) => fs.existsSync(path.join(ctx.root, f)))
+    if (notes) check('project notes file', true, notes)
+    else if (fs.existsSync(path.join(ctx.root, 'knowledge.md'))) warn('knowledge.md is no longer read by Freebuff/Codebuff', 'rename it to AGENTS.md')
+    else warn('no AGENTS.md or CLAUDE.md', 'optional — omf setup creates an AGENTS.md template')
+  }
+
   // Secret hygiene: if secrets live in the project config, it should be ignored.
   if (cfg && ctx.scope !== 'global' && fs.existsSync(ctx.configFile)) {
     const hasSecrets = JSON.stringify(cfg.notifications || {}).match(/token|webhook|password/i)
@@ -765,7 +854,7 @@ ${paint(c.bold, 'Usage')}
   omf <command> [options]
 
 ${paint(c.bold, 'Setup')}
-  ${paint(c.cyan, 'setup')}        Install pack + seed config + knowledge.md (one-shot)
+  ${paint(c.cyan, 'setup')}        Install pack + seed config + AGENTS.md (one-shot)
   ${paint(c.cyan, 'install')}      Install the Freebuff-compatible workflow skill
   ${paint(c.cyan, 'update')}       Refresh and migrate old agent installs to skill-only
   ${paint(c.cyan, 'uninstall')}    Remove the pack

@@ -6,7 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
+## [0.3.0] - 2026-11-07
+
+Freebuff compatibility, reliability and deterministic-orchestration release.
+
+### Freebuff compatibility
+
+#### Changed
 
 - Freebuff installs now default to `/skill:omf-workflow` without loadable OMF
   agents. `omf update` migrates an existing installation to this mode. Freebuff
@@ -16,16 +22,35 @@ All notable changes to this project are documented here. The format follows
   pack for Codebuff or a configured BYOK connection. `omf doctor` reports the
   install mode and warns when full agents may be incompatible with free sessions.
 
-### Added
+- Skill-only installs no longer write `.agents/types/agent-definition.ts`, and
+  `omf update` removes an unmodified OMF copy. Current Freebuff/Codebuff builds
+  ask the user to trust any project `.agents` dir that contains `.ts`/`.js`
+  files, so the shim triggered that prompt for no benefit. `--agents` installs
+  still seed it.
+- `omf setup` writes an `AGENTS.md` template instead of `knowledge.md`, which
+  current Freebuff/Codebuff no longer read. An existing `AGENTS.md`/`CLAUDE.md`
+  is kept; a legacy `knowledge.md` gets a rename hint.
+- `omf doctor` checks the `omf-workflow` skill, project notes file
+  (`AGENTS.md`/`CLAUDE.md`, legacy `knowledge.md`), executable files that cause
+  a trust prompt in skill-only mode, and whether `.agents` is trusted in
+  `--agents` mode. The types-shim check runs only in `--agents` mode.
+- Dev/CI: TypeScript 7, `actions/checkout@v7`, `actions/setup-node@v7`, Node 26
+  added to the test matrix. Model presets re-reviewed (2026-11); they already
+  use the newest ids the current Codebuff SDK (0.10.7) lists.
+
+#### Fixed
+
+- JSONC config parsing no longer corrupts string values containing `,}` / `,]`
+  or ending in a backslash (e.g. `"C:\\"`).
+
+#### Added
 
 - A Freebuff-compatible workflow skill and a smoke test asserting that the
   default install exposes the skill while loading zero custom agents.
 
-## [0.3.0]
+### Reliability and orchestration
 
-Reliability and deterministic-orchestration release.
-
-### Added
+#### Added
 
 - **Weekly Codebuff SDK canary.** Normal PR/push CI now smoke-tests the pinned
   known-good `@codebuff/sdk@0.10.7`; a separate scheduled/manual workflow tests
@@ -42,7 +67,7 @@ Reliability and deterministic-orchestration release.
   enforce research → design → plan → implement → test → review/fix in code. An
   optional `verifyCommand` is a deterministic final success gate.
 
-### Changed
+#### Changed
 
 - **Pack updates are staged and atomically swapped.** `install --force` / `update`
   no longer deletes the working `.agents/oh-my-freebuff` tree before the new
@@ -54,7 +79,7 @@ Reliability and deterministic-orchestration release.
 - The local `AgentDefinition` shim now tracks Codebuff's `STEP_TEXT` /
   `GENERATE_N` handleSteps yield shapes used by programmatic orchestrators.
 
-### Fixed
+#### Fixed
 
 - **Malformed config is no longer silently treated as `{}` on reads.** User and
   project config are parsed strictly; `omf config`, setup and routing operations

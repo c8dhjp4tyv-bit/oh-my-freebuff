@@ -1,8 +1,8 @@
-# Project knowledge
+# AGENTS.md
 
-Freebuff / Codebuff auto-loads a `knowledge.md` (or `AGENTS.md` / `CLAUDE.md`)
-from your project so every agent shares the same context. Copy this file to your
-project root, delete what doesn't apply, and fill in the rest. The tighter this
+Freebuff / Codebuff load `AGENTS.md` (or `CLAUDE.md`) from your project so every
+agent shares the same context. Keep this file at your project root, delete what
+doesn't apply, and fill in the rest. The tighter this
 is, the better every oh-my-freebuff agent behaves.
 
 ## What this project is

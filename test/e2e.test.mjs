@@ -79,6 +79,72 @@ test('install seeds the types shim when none exists', () => {
   assert.match(fs.readFileSync(typesFile, 'utf8'), /AgentDefinition/)
 })
 
+test('skill-only install writes no executable files under .agents (no trust prompt)', () => {
+  assert.equal(omfDefault(['install']).status, 0)
+  const found = []
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (/\.(ts|tsx|js|mjs|cjs)$/.test(e.name)) found.push(p)
+    }
+  }
+  walk(path.join(dir, '.agents'))
+  assert.deepEqual(found, [])
+})
+
+test('skill-only update removes an unmodified OMF types shim but keeps a user-owned one', () => {
+  assert.equal(omf(['install']).status, 0) // --agents seeds the shim
+  const typesFile = path.join(dir, '.agents', 'types', 'agent-definition.ts')
+  assert.ok(fs.existsSync(typesFile))
+  assert.equal(omfDefault(['update']).status, 0)
+  assert.ok(!fs.existsSync(typesFile))
+  assert.ok(!fs.existsSync(path.dirname(typesFile)))
+
+  fs.mkdirSync(path.dirname(typesFile), { recursive: true })
+  fs.writeFileSync(typesFile, '// user-owned\n')
+  assert.equal(omfDefault(['update']).status, 0)
+  assert.equal(fs.readFileSync(typesFile, 'utf8'), '// user-owned\n')
+  assert.match(omfDefault(['doctor']).stdout, /Freebuff will ask to trust this repo/)
+})
+
+test('setup keeps an existing CLAUDE.md and flags a legacy knowledge.md', () => {
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# mine\n')
+  assert.equal(omfDefault(['setup']).status, 0)
+  assert.ok(!fs.existsSync(path.join(dir, 'AGENTS.md')))
+  assert.match(omfDefault(['doctor']).stdout, /project notes file\s+CLAUDE\.md/)
+
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'omf-legacy-'))
+  try {
+    fs.writeFileSync(path.join(other, 'knowledge.md'), '# old\n')
+    const res = omfDefault(['setup', '--dir', other])
+    assert.equal(res.status, 0, res.stderr)
+    assert.match(res.stdout, /rename it to AGENTS\.md/)
+    assert.ok(!fs.existsSync(path.join(other, 'AGENTS.md')))
+    assert.match(omfDefault(['doctor', '--dir', other]).stdout, /knowledge\.md is no longer read/)
+  } finally {
+    fs.rmSync(other, { recursive: true, force: true })
+  }
+})
+
+test('doctor checks the workflow skill and reports agents-mode trust', () => {
+  assert.equal(omf(['install']).status, 0)
+  const res = spawnSync('node', [OMF, 'doctor'], {
+    cwd: dir, encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1', FREEBUFF_CONFIG_DIR: path.join(dir, 'cfg') },
+  })
+  assert.match(res.stdout, /omf-workflow skill installed/)
+  assert.match(res.stdout, /\.agents not trusted yet/)
+  fs.mkdirSync(path.join(dir, 'cfg'))
+  fs.writeFileSync(path.join(dir, 'cfg', 'trusted-agent-dirs.json'),
+    JSON.stringify({ [fs.realpathSync(path.join(dir, '.agents'))]: { trustedAt: new Date().toISOString() } }))
+  const trusted = spawnSync('node', [OMF, 'doctor'], {
+    cwd: dir, encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1', FREEBUFF_CONFIG_DIR: path.join(dir, 'cfg') },
+  })
+  assert.match(trusted.stdout, /✓ \.agents trusted by Freebuff\/Codebuff/)
+})
+
 test('skill add/remove roundtrip; traversal is refused and touches nothing outside', () => {
   omf(['install'])
   // a decoy file that a traversal argument might try to reach
@@ -106,11 +172,11 @@ test('--dir operates only on the target project, not the working directory', () 
     // everything lands in the target
     assert.ok(fs.existsSync(path.join(target, '.agents', 'oh-my-freebuff')))
     assert.ok(fs.existsSync(path.join(target, '.freebuff', 'omf.jsonc')))
-    assert.ok(fs.existsSync(path.join(target, 'knowledge.md')))
+    assert.ok(fs.existsSync(path.join(target, 'AGENTS.md')))
     // and nothing leaks into the working directory
     assert.ok(!fs.existsSync(path.join(workdir, '.agents')))
     assert.ok(!fs.existsSync(path.join(workdir, '.freebuff')))
-    assert.ok(!fs.existsSync(path.join(workdir, 'knowledge.md')))
+    assert.ok(!fs.existsSync(path.join(workdir, 'AGENTS.md')))
   } finally {
     fs.rmSync(workdir, { recursive: true, force: true })
     fs.rmSync(target, { recursive: true, force: true })
