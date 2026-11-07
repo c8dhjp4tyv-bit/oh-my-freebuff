@@ -16,12 +16,47 @@ export const paint = (color, s) => (useColor ? color + s + c.reset : s)
 
 // ---- jsonc ------------------------------------------------------------------
 
-/** Strip // and block comments and trailing commas, then JSON.parse. */
+/**
+ * Strip // and block comments and trailing commas, then JSON.parse. A small
+ * scanner keeps string contents (escaped quotes, trailing backslashes, ",}")
+ * untouched.
+ */
 export function parseJsonc(text) {
-  const noComments = text
-    .replace(/\\"|"(?:\\"|[^"])*"|(\/\/[^\n\r]*|\/\*[\s\S]*?\*\/)/g, (m, g) => (g ? '' : m))
-    .replace(/,(\s*[}\]])/g, '$1')
-  return JSON.parse(noComments)
+  let out = ''
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const ch = text[i]
+    if (ch === '"') {
+      let j = i + 1
+      while (j < n && text[j] !== '"') j += text[j] === '\\' ? 2 : 1
+      out += text.slice(i, j + 1)
+      i = j + 1
+    } else if (ch === '/' && text[i + 1] === '/') {
+      while (i < n && text[i] !== '\n' && text[i] !== '\r') i++
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      i = end === -1 ? n : end + 2
+    } else if (ch === ',') {
+      // Drop the comma if only whitespace/comments separate it from } or ].
+      let j = i + 1
+      for (;;) {
+        while (j < n && /\s/.test(text[j])) j++
+        if (text[j] === '/' && text[j + 1] === '/') {
+          while (j < n && text[j] !== '\n' && text[j] !== '\r') j++
+        } else if (text[j] === '/' && text[j + 1] === '*') {
+          const end = text.indexOf('*/', j + 2)
+          j = end === -1 ? n : end + 2
+        } else break
+      }
+      if (text[j] !== '}' && text[j] !== ']') out += ch
+      i++
+    } else {
+      out += ch
+      i++
+    }
+  }
+  return JSON.parse(out)
 }
 
 export function readJsonc(file) {

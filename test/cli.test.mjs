@@ -32,6 +32,15 @@ test('parseJsonc strips comments and trailing commas but keeps URLs', () => {
   assert.deepEqual(parsed, { a: 1, b: 'http://x/y', c: [1, 2] })
 })
 
+test('parseJsonc leaves string contents alone', () => {
+  assert.deepEqual(parseJsonc(String.raw`{"a": "x,}", "b": "y, ]"}`), { a: 'x,}', b: 'y, ]' })
+  assert.deepEqual(parseJsonc(String.raw`{"p": "C:\\", "q": "//kept", "r": "/* kept */"}`),
+    { p: 'C:\\', q: '//kept', r: '/* kept */' })
+  assert.deepEqual(parseJsonc(String.raw`{"e": "say \"hi\"", }`), { e: 'say "hi"' })
+  assert.deepEqual(parseJsonc('{"a": [1, 2, // last\n], /* c */ }'), { a: [1, 2] })
+  assert.throws(() => parseJsonc('{"a": 1 "b": 2}'))
+})
+
 test('config set/get roundtrips with dotted keys, scoped to the context dir', () => {
   const ctx = ctxAt(tmp)
   setConfigValue(ctx, 'modelPreset', 'budget')
