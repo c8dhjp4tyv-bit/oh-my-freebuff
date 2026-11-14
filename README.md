@@ -4,6 +4,7 @@
 [![npm](https://img.shields.io/npm/v/oh-my-freebuff)](https://www.npmjs.com/package/oh-my-freebuff)
 [![node](https://img.shields.io/node/v/oh-my-freebuff)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Socket Badge](https://badge.socket.dev/npm/package/oh-my-freebuff/0.3.0)](https://badge.socket.dev/npm/package/oh-my-freebuff/0.3.0)
 
 Workflow skills for [Freebuff](https://freebuff.com), with an optional
 multi-agent pack for [Codebuff](https://codebuff.com) or a BYOK connection.
